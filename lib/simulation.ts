@@ -1,0 +1,4 @@
+import {inputSchema} from './ev';
+// The token describes only synthetic state; it is not an authentication token.
+export function startSimulation(raw:unknown){const p=inputSchema.parse(raw);return {simulation_id:btoa(JSON.stringify({started:Date.now(),soc:p.soc,lat:p.lat,lng:p.lng})).replaceAll('+','-').replaceAll('/','_').replaceAll('=',''),source:'simulated'};}
+export function readSimulation(id:string){if(id.length>500)throw new Error('Invalid simulation');const raw=JSON.parse(atob(id.replaceAll('-','+').replaceAll('_','/'))) as Record<string,number>;const p=inputSchema.parse(raw);if(!Number.isFinite(raw.started)||raw.started>Date.now()||Date.now()-raw.started>86400000)throw new Error('Simulation expired');return{timestamp:new Date().toISOString(),latitude:p.lat,longitude:p.lng,soc_percent:Math.max(0,Math.round((p.soc-Math.floor((Date.now()-raw.started)/4000)*.1)*10)/10),speed_kmh:30,source:'simulated'};}

@@ -1,0 +1,11 @@
+[
+{"id":"demo-1","name":"Cubbon Park Hub","area":"Kasturba Road","lat":12.9758,"lng":77.5981,"power":22,"connector":"Type 2","count":2,"price":14,"access":"public","status":"operational","category":0,"distance":1.7,"minutes":8},
+{"id":"demo-2","name":"Indiranagar Fast Charge","area":"100 Feet Road, Indiranagar","lat":12.9784,"lng":77.6408,"power":120,"connector":"CCS2","count":4,"price":19,"access":"public","status":"operational","category":1,"distance":5.6,"minutes":18},
+{"id":"demo-3","name":"Ulsoor Lakeside","area":"Halasuru, Bengaluru","lat":12.9889,"lng":77.6195,"power":60,"connector":"CCS2","count":4,"price":16,"access":"public","status":"operational","category":0,"distance":3.4,"minutes":13},
+{"id":"demo-4","name":"Koramangala Central","area":"5th Block, Koramangala","lat":12.9346,"lng":77.6189,"power":60,"connector":"CCS2","count":3,"price":17,"access":"public","status":"operational","category":2,"distance":6.8,"minutes":24},
+{"id":"demo-5","name":"MG Road Charge Point","area":"Trinity Circle","lat":12.9708,"lng":77.6171,"power":30,"connector":"CCS2","count":2,"price":null,"access":"public","status":"operational","category":0,"distance":2.4,"minutes":10},
+{"id":"demo-6","name":"Richmond Town","area":"Richmond Road","lat":12.9557,"lng":77.5991,"power":60,"connector":"CCS2","count":2,"price":18,"access":"public","status":"offline","category":1,"distance":3.1,"minutes":12},
+{"id":"demo-7","name":"Domlur Business Park","area":"Inner Ring Road","lat":12.9605,"lng":77.6394,"power":120,"connector":"CCS2","count":4,"price":18,"access":"private","status":"operational","category":1,"distance":5.4,"minutes":21},
+{"id":"demo-8","name":"Malleshwaram North","area":"Margosa Road","lat":13.0017,"lng":77.5713,"power":50,"connector":"CHAdeMO","count":2,"price":15,"access":"public","status":"operational","category":0,"distance":7.5,"minutes":28},
+{"id":"demo-9","name":"Jayanagar South","area":"4th Block, Jayanagar","lat":12.9259,"lng":77.5838,"power":60,"connector":"CCS2","count":3,"price":15,"access":"unknown","status":"unknown","category":0,"distance":8.2,"minutes":29}
+]

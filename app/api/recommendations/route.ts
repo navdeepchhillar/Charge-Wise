@@ -1,0 +1,5 @@
+import {limited} from '@/lib/rate-limit';
+import {pythonProxy} from '@/lib/python-proxy';
+import { inputSchema,demoStations,rank } from '@/lib/ev';
+import { connectedStations } from '@/lib/providers';
+export async function POST(req:Request){if(limited(req))return Response.json({error:"Too many requests. Please wait a minute."},{status:429});const proxied=await pythonProxy('recommendations',req.clone());if(proxied)return proxied;try{const text=await req.text();if(text.length>12000)return Response.json({error:'Request too large'},{status:413});const parsed=inputSchema.safeParse(JSON.parse(text));if(!parsed.success)return Response.json({error:'Please check your vehicle and location values.',details:parsed.error.flatten()},{status:422});const p=parsed.data;const source=p.mode==='demo'?{stations:demoStations(p),stale:false}:await connectedStations(p);return Response.json({...rank(p,source.stations),stale:source.stale});}catch(e){return Response.json({error:e instanceof Error?e.message:'Unable to load stations'},{status:503});}}

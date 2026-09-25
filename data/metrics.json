@@ -1,0 +1,25 @@
+{
+  "version": "synthetic-queue-v1",
+  "provenance": "Synthetic queue sessions; not validated against real charging stations.",
+  "seed": 42,
+  "rows": 58745,
+  "train_rows": 30238,
+  "validation_rows": 6031,
+  "test_rows": 6928,
+  "holdout_rows": 2434,
+  "split": "Days 1\u201349 train; 50\u201359 validation; 60\u201370 test. Stations 11\u201312 held out.",
+  "selected": "tree",
+  "tree_depth": 8,
+  "test_mae_minutes": 5.06,
+  "baseline_mae_minutes": 5.22,
+  "station_holdout_mae_minutes": 2.94,
+  "regime_mae": {
+    "busy_hours": 8.08,
+    "other_hours": 1.32
+  },
+  "limitations": [
+    "Synthetic performance is not real-world accuracy.",
+    "Unobserved current queues cause irreducible uncertainty.",
+    "No real occupancy or traffic feeds."
+  ]
+}
