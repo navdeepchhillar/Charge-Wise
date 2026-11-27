@@ -122,28 +122,44 @@ def map_osm(el: Dict) -> Optional[Dict]:
     }
 
 
+def overpass_query(lat: float, lng: float, timeout_s: int = int(OVERPASS_TIMEOUT_S)) -> str:
+    return (f'[out:json][timeout:{timeout_s}];'
+            f'nwr["amenity"="charging_station"](around:{FETCH_RADIUS_KM * 1000},{lat},{lng});out center tags;')
+
+
+def map_osm_elements(elements: List[Dict]) -> List[Dict]:
+    return [s for s in (map_osm(e) for e in elements) if s]
+
+
+def _describe(e: Exception) -> str:
+    code = getattr(e, "code", None)
+    return f"HTTP {code}" if code else type(e).__name__
+
+
 def osm_stations(lat: float, lng: float) -> List[Dict]:
     """Ask every Overpass mirror at once and take the first good answer (public mirrors are often slow)."""
-    q = (f'[out:json][timeout:{int(OVERPASS_TIMEOUT_S)}];'
-         f'nwr["amenity"="charging_station"](around:{FETCH_RADIUS_KM * 1000},{lat},{lng});out center tags;')
-    body = urllib.parse.urlencode({"data": q}).encode()
+    body = urllib.parse.urlencode({"data": overpass_query(lat, lng)}).encode()
     pool = ThreadPoolExecutor(max_workers=len(OVERPASS_URLS))
     try:
-        pending = {pool.submit(_http_json, url, body, OVERPASS_TIMEOUT_S) for url in OVERPASS_URLS}
-        deadline, last = time.monotonic() + OVERPASS_TIMEOUT_S, None
+        pending = {pool.submit(_http_json, url, body, OVERPASS_TIMEOUT_S): url for url in OVERPASS_URLS}
+        deadline, errors = time.monotonic() + OVERPASS_TIMEOUT_S, []
         while pending:
-            done, pending = wait(pending, timeout=max(0.0, deadline - time.monotonic()), return_when=FIRST_COMPLETED)
+            done, _ = wait(set(pending), timeout=max(0.0, deadline - time.monotonic()), return_when=FIRST_COMPLETED)
             if not done:
                 break
             for f in done:
+                url = pending.pop(f)
                 try:
-                    els = f.result().get("elements", [])
-                    return [s for s in (map_osm(e) for e in els) if s]
+                    return map_osm_elements(f.result().get("elements", []))
                 except Exception as e:  # noqa: BLE001 - wait for another mirror
-                    last = e
-        raise last or TimeoutError("Overpass timed out")
+                    errors.append(f"{urllib.parse.urlparse(url).netloc}: {_describe(e)}")
+        raise OverpassError("; ".join(errors) or "timed out")
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+
+
+class OverpassError(RuntimeError):
+    """All Overpass mirrors failed; the message lists each mirror's error (e.g. HTTP 429 / 403)."""
 
 
 # ── Open Charge Map (optional, needs a key) ───────────────────────────────

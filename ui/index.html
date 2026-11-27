@@ -300,8 +300,10 @@ async function api(path, body) {
   const r = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
   if (!r.ok) {
     let msg = r.status + "";
-    try { const j = await r.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch (_) {}
-    throw new Error(msg);
+    let detail = null;
+    try { const j = await r.json(); detail = j.detail; msg = typeof j.detail === "string" ? j.detail : (j.detail && j.detail.message) || JSON.stringify(j.detail); } catch (_) {}
+    const e = new Error(msg); e.status = r.status; e.detail = detail;
+    throw e;
   }
   return r.json();
 }
@@ -745,7 +747,15 @@ async function ensureReal(force) {
   LIVE.realLoading = true; LIVE.realError = null;
   if (!LIVE.real) { $("alert").className = "alert plan"; $("alert").textContent = "Loading real charging stations near you from OpenStreetMap… (first time in an area can take 10–30 s)"; }
   try {
-    const d = await api(`/api/stations/near?lat=${LIVE.last[0].toFixed(4)}&lng=${LIVE.last[1].toFixed(4)}`);
+    const lat = LIVE.last[0].toFixed(4), lng = LIVE.last[1].toFixed(4);
+    let d;
+    try {
+      d = await api(`/api/stations/near?lat=${lat}&lng=${lng}`);
+    } catch (err) {
+      const fb = err.detail && err.detail.browser_fallback;
+      if (!fb) throw err;
+      d = await browserOverpass(fb, +lat, +lng);      // the server's IP was refused: ask OpenStreetMap from this device
+    }
     try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), data: d })); } catch (_) {}
     applyReal(d, false);
   } catch (err) {
@@ -756,6 +766,18 @@ async function ensureReal(force) {
       $("alert").textContent = "Real station data is unavailable right now. Untick \"Use real stations\" to use the synthetic network, or try again in a minute.";
     }
   } finally { LIVE.realLoading = false; }
+}
+async function browserOverpass(fb, lat, lng) {
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const raw = await Promise.any(fb.urls.map((u) =>
+      fetch(u, { method: "POST", body: new URLSearchParams({ data: fb.query }), signal: ctrl.signal })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))));
+    ctrl.abort();
+    return await api("/api/stations/map", { elements: raw.elements || [], lat, lng });
+  } catch (e) {
+    throw new Error("OpenStreetMap is busy (" + (e.errors ? e.errors.map((x) => x.message).join(", ") : e.message) + ")");
+  } finally { clearTimeout(timer); }
 }
 function applyReal(d, cached) {
   LIVE.real = { center: [d.lat, d.lng], stations: d.stations, label: d.sources.join(" + ") };

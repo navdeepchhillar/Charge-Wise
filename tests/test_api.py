@@ -66,3 +66,25 @@ def test_ride_state_is_fast():
     for s in range(0, 7200, 600):
         client.post("/api/ride/state", json={"route_id": "mysuru-highway", "start_soc": 90, "elapsed_s": s, "limit": 200})
     assert (time.perf_counter() - t0) / 12 < 0.15
+
+
+def test_stations_map_endpoint_maps_browser_fetched_osm():
+    els = [{"type": "node", "id": 5, "lat": 28.63, "lon": 77.21, "tags": {"amenity": "charging_station",
+            "name": "EESL", "socket:type2_combo": "1", "socket:type2_combo:output": "60 kW"}},
+           {"type": "node", "id": 6, "lat": 28.63, "lon": 77.22, "tags": {"amenity": "charging_station", "name": "Ather Grid"}}]
+    j = client.post("/api/stations/map", json={"elements": els, "lat": 28.63, "lng": 77.21}).json()
+    assert j["count"] == 1 and j["stations"][0]["connectors"] == ["CCS2"] and j["via"] == "browser"
+
+
+def test_stations_near_failure_offers_browser_fallback(monkeypatch):
+    from chargewise import providers
+    providers._cache.clear()
+    def boom(url, body=None, timeout=6.0):
+        raise TimeoutError("refused")
+    monkeypatch.setattr(providers, "_http_json", boom)
+    monkeypatch.delenv("OCM_API_KEY", raising=False)
+    r = client.get("/api/stations/near", params={"lat": 10.0, "lng": 10.0})
+    assert r.status_code == 503
+    fb = r.json()["detail"]["browser_fallback"]
+    assert fb["urls"] and "charging_station" in fb["query"] and "around:15000,10.0,10.0" in fb["query"]
+    providers._cache.clear()
