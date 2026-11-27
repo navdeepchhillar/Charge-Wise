@@ -68,13 +68,16 @@ Optional environment variables (Vercel → Settings → Environment Variables �
 | `OVERPASS_URLS` | 3 public mirrors | comma-separated Overpass endpoints (raced in parallel) |
 | `OVERPASS_TIMEOUT_S` / `OSRM_TIMEOUT_S` | 25 / 4 | how long to wait before falling back |
 
-Real-data limits: OpenStreetMap entries in India often miss plug type and power ("check first"); prices and
-live occupancy are not published openly. 2-wheeler and battery-swap stations are filtered out.
+Real-data gaps and how the app fills them: plug type and power are inferred from the operator for the
+main car networks (shown as "≈ likely"); missing prices are estimated from typical tariffs (shown as
+"est."); stations with no plug information stay "? unknown / check first". Live occupancy is not published
+openly, so the queue is the ML estimate. 2-wheeler and battery-swap stations are filtered out. Adding an
+`OCM_API_KEY` merges Open Charge Map, which often has more plug details.
 
 ## 7. Tests
 
 ```bash
-pytest -q          # 82 tests, ~10 s, no network (external services are mocked)
+pytest -q          # 102 tests, ~5 s, no network (external services are mocked)
 ```
 
 ## 8. Branches and deploying (Git → Vercel)

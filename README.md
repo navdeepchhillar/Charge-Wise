@@ -83,6 +83,20 @@ For each station within the search radius, from the car's **current** position:
 
 9. **Stickiness**: the current pick gets +4 points, so it only changes when another station is clearly better.
 
+### Filling gaps in open data (`chargewise/enrich.py`)
+
+Open data rarely has prices and, in India, often lacks plug type and power. Every station gets a grade:
+
+| Grade | Meaning | How it's ranked |
+|---|---|---|
+| ✓ **confirmed** | plug type and power come from the data | normal |
+| ≈ **likely** | filled from the operator: Tata Power EZ Charge, Statiq, ChargeZone, Jio-bp pulse, Zeon, Glida, Shell Recharge, Magenta, car dealerships → CCS2 + Type 2 with a typical power | usable, −3 points, "confirm in the operator's app" |
+| ? **unknown** | no plug information | "check first"; shown as best only if nothing better exists |
+
+Missing prices are estimated from typical Indian public tariffs (AC ₹13, DC ₹19, DC ≥50 kW ₹22 per kWh) and
+always shown as "est.". EESL/BESCOM chargers stay unknown with a note: many are Bharat DC-001, which most
+CCS2 cars can't use.
+
 ## API
 
 | Method | Path | |
@@ -105,7 +119,7 @@ chargewise/            engine: geo, data, simulator, ranking, live feed, provide
 ui/index.html          single-page app (no build step)
 data/                  stations.json (9 fixtures), model.json (queue tree), metrics.json
 ml/train.py            retrains the queue model (needs requirements-ml.txt)
-tests/                 82 pytest tests (external services mocked)
+tests/                 102 pytest tests (external services mocked)
 docs/VALIDATION.md     what is tested and what is not claimed
 ```
 
