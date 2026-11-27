@@ -1,1 +1,0 @@
-export function GET(){return Response.json({status:'ok',station_configured:!!process.env.OCM_API_KEY,routing_configured:!!process.env.ORS_API_KEY,model_version:'synthetic-queue-v1',runtime:'hosted',python_proxy:!!process.env.PYTHON_API_URL});}
