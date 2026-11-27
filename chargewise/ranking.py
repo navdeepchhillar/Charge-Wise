@@ -16,9 +16,11 @@ from . import data
 from .geo import haversine_km
 from .live import availability
 from .providers import stations_for
+from .routing import road_table
 from .queue_model import predict_wait_min, version as model_version
 
-DC_CONNECTORS = {"CCS2", "CHAdeMO"}
+DC_CONNECTORS = {"CCS2", "CHAdeMO", "CCS1", "Tesla", "GB/T DC"}
+SYNTHETIC = {"synthetic", "original fixture"}
 WEIGHTS: Dict[str, Dict[str, float]] = {
     #            travel wait  charge cost  buffer reliability detour
     "balanced": dict(travel=.20, wait=.15, charge=.20, cost=.10, buffer=.10, reliability=.15, detour=.10),
@@ -30,6 +32,30 @@ STICKY_BONUS = 4.0   # score points: another station must beat the current pick 
 UTURN_KM = 4.5       # extra km to turn back on a divided highway
 SAFETY = 1.10        # +10% energy for A/C, traffic and estimation error
 CHARGE_EFF = 0.92    # grid → battery
+
+
+class StationIn(BaseModel):
+    """A station supplied by the caller (e.g. real stations the browser fetched once via /api/stations/near)."""
+    id: str
+    name: str = "Charging station"
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    area: str = ""
+    operator: str = "Unknown operator"
+    power_kw: Optional[float] = Field(None, ge=0, le=1000)
+    connectors: List[str] = []
+    count: Optional[int] = Field(None, ge=0, le=500)
+    price_per_kwh: Optional[float] = Field(None, ge=0)
+    access: str = "public"
+    status: str = "unknown"
+    category: int = 0
+    hours: str = "24x7"
+    hours_raw: Optional[str] = None
+    uptime: float = Field(0.9, ge=0, le=1)
+    amenities: List[str] = []
+    road: Literal["city", "highway"] = "city"
+    source: str = "provided"
+    power_assumed: bool = False
 
 
 class RankRequest(BaseModel):
@@ -47,8 +73,13 @@ class RankRequest(BaseModel):
     route_id: Optional[str] = None
     progress_km: float = Field(0, ge=0)
     limit: int = Field(60, ge=1, le=200)
-    source: Literal["synthetic", "ocm"] = Field("synthetic", description="station data: synthetic network or "
-                                                "real Open Charge Map stations (needs OCM_API_KEY)")
+    source: Literal["synthetic", "real", "ocm"] = Field("synthetic", description="station data: the synthetic "
+                                                        "network, or real stations near the point (OpenStreetMap, "
+                                                        "+ Open Charge Map if OCM_API_KEY is set)")
+    road_routing: bool = Field(False, description="real road distance/time (OSRM) for the nearest candidates")
+    stations: Optional[List[StationIn]] = Field(None, max_length=600, description="rank these stations instead "
+                                                "of looking them up (overrides `source`)")
+    stations_label: str = Field("provided", max_length=80)
     live: bool = Field(True, description="use the live availability feed (free plugs, faults)")
     sticky_id: Optional[str] = Field(None, description="the station currently recommended; it keeps a small "
                                      "bonus so the pick doesn't flip-flop between near-equal stations")
@@ -61,7 +92,7 @@ def _speed_kmh(road: str, hour: int) -> float:
 
 
 def _open_at(hours: str, hour: int) -> bool:
-    if hours == "24x7":
+    if hours in ("24x7", "unknown"):
         return True
     if hours == "closed-now":
         return False
@@ -98,15 +129,32 @@ def rank(req: RankRequest) -> Dict:
     usable_kwh = max(0.0, (req.soc - req.reserve_pct) / 100 * cap)
     range_km = usable_kwh / (whkm / 1000 * SAFETY)
 
-    station_list, source_used, warning = stations_for(req.source, req.lat, req.lng, req.radius_km)
+    if req.stations is not None:
+        station_list, source_used, warning = [s.model_dump() for s in req.stations], req.stations_label, None
+    else:
+        station_list, source_used, warning = stations_for(req.source, req.lat, req.lng, req.radius_km)
+    straight_of = {st["id"]: haversine_km(here, (st["lat"], st["lng"])) for st in station_list}
+    in_radius = [st for st in station_list if straight_of[st["id"]] <= req.radius_km]
+    routed, route_warning = {}, None
+    if req.road_routing:
+        # real road distances for the nearest stations the car could actually use
+        usable = [st for st in in_radius if st["status"] != "offline" and st["access"] != "private"
+                  and (not st["connectors"] or set(st["connectors"]) & set(v["connectors"]))]
+        # confirmed-compatible stations first (they can become "best"), then the nearest unconfirmed ones
+        usable.sort(key=lambda st: (not st["connectors"], straight_of[st["id"]]))
+        routed, route_warning = road_table(here, usable)
     out: List[Dict] = []
-    for st in station_list:
-        straight = haversine_km(here, (st["lat"], st["lng"]))
-        if straight > req.radius_km:
-            continue
+    for st in in_radius:
+        straight = straight_of[st["id"]]
         road = st.get("road", "city")
-        road_km = straight * data.ROAD_FACTOR[road]
-        minutes = road_km / _speed_kmh(road, req.hour) * 60
+        if st["id"] in routed:
+            road_km, free_min = routed[st["id"]]
+            minutes = free_min * data.SPEED_KMH[road] / _speed_kmh(road, req.hour)   # add rush-hour slowdown
+            distance_source = "road"
+        else:
+            road_km = straight * data.ROAD_FACTOR[road]
+            minutes = road_km / _speed_kmh(road, req.hour) * 60
+            distance_source = "estimate"
         hw = 1.12 if road == "highway" else 1.0           # highway speeds use more energy per km
         energy = road_km * whkm / 1000 * SAFETY * hw
         arrival = req.soc - energy / cap * 100
@@ -125,6 +173,8 @@ def rank(req: RankRequest) -> Dict:
             cons.append("Status unknown, may not be working"); verify = True
         if st["access"] == "private":
             cons.append("Private access only"); excluded = True
+        if st["hours"] == "unknown" and st.get("hours_raw"):
+            cons.append(f"Opening hours: {st['hours_raw']} (check)")
         if not _open_at(st["hours"], a_hour):
             cons.append(f"Closed when you arrive (~{a_hour:02d}:00)"); excluded = True
         if arrival < req.reserve_pct:
@@ -136,7 +186,8 @@ def rank(req: RankRequest) -> Dict:
         charge_min = _charge_minutes(arrival_c, req.target_pct, cap, kw, dc) if kw else None
         delivered = max(0.0, req.target_pct - arrival_c) / 100 * cap / CHARGE_EFF
         wait = predict_wait_min(a_hour, a_day, st["count"] or 1, st["power_kw"] or 7.4, st["category"])
-        live = availability(st, req.day, req.hour, req.minute) if req.live else None
+        # the live plug feed is simulated, so only the synthetic network uses it; real stations get the ML estimate
+        live = availability(st, req.day, req.hour, req.minute) if req.live and st.get("source") in SYNTHETIC else None
         if live and live["fault"]:
             cons.append(live["note"]); excluded = True
         elif live and live["free"] == 0:
@@ -179,6 +230,8 @@ def rank(req: RankRequest) -> Dict:
         score = round(sum(weights[k] * comp[k] for k in weights) * 100, 1)
         rank_score = score + (STICKY_BONUS if st["id"] == req.sticky_id else 0.0)
 
+        if st.get("power_assumed"):
+            cons.append(f"Power not listed (assumed {st['power_kw']:g} kW)")
         if dc and kw >= 50:
             reasons.append(f"Fast DC: {kw:.0f} kW for your car")
         elif not dc and kw:
@@ -206,6 +259,7 @@ def rank(req: RankRequest) -> Dict:
             "charge_kw": round(kw, 1), "charge_min": round(charge_min, 1) if charge_min is not None else None,
             "cost_inr": cost, "detour_km": round(detour_km, 1) if detour_km is not None else None, "ahead": ahead,
             "total_min": round(minutes + wait + (charge_min or 0), 1), "live": live, "source": st.get("source"),
+            "distance_source": distance_source,
             "components": {k: round(x, 3) for k, x in comp.items()}, "reasons": reasons, "cons": cons,
         })
 
@@ -214,12 +268,15 @@ def rank(req: RankRequest) -> Dict:
     out.sort(key=lambda s: (order[s["eligibility"]], -rank_of[s["id"]] if s["eligibility"] != "excluded" else 0,
                             s["road_km"], s["id"]))
     eligible = [s for s in out if s["eligibility"] == "eligible"]
-    best = eligible[0] if eligible else None
+    verify = [s for s in out if s["eligibility"] == "verify"]
+    # confirmed stations always win; with sparse real data (no plug info) fall back to the best unconfirmed one
+    best = eligible[0] if eligible else verify[0] if verify else None
+    best_confirmed = bool(eligible)
 
     remaining_km = None
     if route is not None:
         remaining_km = max(0.0, route.length_km - req.progress_km) * 1.15
-    if not eligible:
+    if not best:
         alert = {"level": "stranded", "message": "No reachable compatible station within your reserve. Slow down, switch off A/C and head to the nearest station marked 'check'."}
     elif req.soc <= req.reserve_pct + 8 or (best and best["arrival_pct"] - req.reserve_pct < 6):
         alert = {"level": "charge_now", "message": f"Charge now: head to {best['name']} ({best['road_km']} km)."}
@@ -233,8 +290,9 @@ def rank(req: RankRequest) -> Dict:
     return {
         "vehicle": {"id": req.vehicle_id, **v}, "soc": req.soc, "range_km": round(range_km, 1),
         "remaining_route_km": round(remaining_km, 1) if remaining_km is not None else None,
-        "best": best, "alert": alert, "preset": req.preset, "weights": weights,
+        "best": best, "best_confirmed": best_confirmed, "alert": alert, "preset": req.preset, "weights": weights,
         "counts": {k: sum(1 for s in out if s["eligibility"] == k) for k in order},
         "stations": out[: req.limit], "model_version": model_version(),
-        "source": source_used, "warning": warning, "as_of": f"{req.hour:02d}:{req.minute:02d}",
+        "source": source_used, "warning": " ".join(w for w in (warning, route_warning) if w) or None,
+        "routing": "osrm" if routed else "estimate", "as_of": f"{req.hour:02d}:{req.minute:02d}",
     }

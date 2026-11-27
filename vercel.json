@@ -3,7 +3,7 @@
   "functions": {
     "app.py": {
       "excludeFiles": "{tests/**,.venv/**,**/__pycache__/**,ml/**,docs/**,howtorun.md,README.md,.pytest_cache/**}",
-      "maxDuration": 15
+      "maxDuration": 60
     }
   }
 }

@@ -1,6 +1,7 @@
 # How to run Chargewise
 
-Everything runs on synthetic data out of the box: no API keys, no database, no Node.js.
+No API keys, no database, no Node.js. Simulated mode is fully offline (synthetic data); Live GPS mode uses
+your real location with free public services (OpenStreetMap stations, OSRM road routing).
 
 ## 1. Requirements
 
@@ -13,7 +14,7 @@ Everything runs on synthetic data out of the box: no API keys, no database, no N
 ```bash
 git clone https://github.com/navdeepchhillar/Charge-Wise.git
 cd Charge-Wise
-git checkout vercel-ride-sim
+git checkout develop          # staging; main = production
 ```
 
 ## 3. Install
@@ -24,8 +25,8 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 ```
 
-`requirements.txt` is what the server needs (FastAPI + Pydantic). `requirements-dev.txt` adds uvicorn
-(local server), pytest and httpx (tests).
+`requirements.txt` is what the server needs (FastAPI, Pydantic, truststore). `requirements-dev.txt` adds
+uvicorn (local server), pytest and httpx (tests).
 
 ## 4. Run
 
@@ -46,34 +47,51 @@ API docs (Swagger): http://127.0.0.1:8000/docs
 | **Preference** | Switch Balanced → Cheapest → Fastest → Reliable | Different stations win; the score breakdown changes. |
 | **Live faults** | Leave a ride running | Now and then a station reports a charger fault (red chip) and the pick reroutes; see the Decision log. |
 | **Any spot** | Pause, click anywhere on the map | Best stop from that point. |
-| **Live GPS** | Tab **📍 Live GPS** → set battery → **Start live tracking** | Uses your real location and clock. Synthetic stations only exist around Bengaluru; elsewhere enable real stations (step 6). Phones need HTTPS, so use the Vercel URL. |
+| **Live GPS (real data)** | Tab **📍 Live GPS** → set battery → **Start live tracking** (allow location) | "Loading real charging stations near you…" (first time in an area 10–30 s, then instant). Real stations appear on the map; the best one shows road km/minutes, reasons, and **🧭 Navigate** opens Google Maps directions from where you are. Phones need HTTPS: use the Vercel URL. |
 
-## 6. Optional: real station locations (Open Charge Map)
+## 6. Real data: what it uses and options
 
-1. Get a free key: https://openchargemap.org/site/develop/api
-2. Locally: `cp .env.example .env`, put the key after `OCM_API_KEY=`, then start with
-   `OCM_API_KEY=$(grep OCM_API_KEY .env | cut -d= -f2) uvicorn app:app --port 8000`
-3. On Vercel: Project → Settings → Environment Variables → `OCM_API_KEY` → **Redeploy**.
-4. In the app: Live GPS → tick **Use real stations near me**.
+| What | Source | Key needed? |
+|---|---|---|
+| Your position, speed, heading | Browser Geolocation API (stays on your device, sent only to this app's API) | no |
+| Charging stations | OpenStreetMap via Overpass (`amenity=charging_station`) | no |
+| More stations (merged) | Open Charge Map | `OCM_API_KEY` (free: https://openchargemap.org/site/develop/api) |
+| Road distance and time | OSRM `table` API (public demo server by default) | no |
+| Turn-by-turn directions | Google Maps (opened by 🧭 Navigate) | no |
 
-Without a key the app keeps working with synthetic stations and says so.
+Optional environment variables (Vercel → Settings → Environment Variables → Redeploy; locally `export …`):
+
+| Variable | Default | Use |
+|---|---|---|
+| `OCM_API_KEY` | – | merge Open Charge Map stations |
+| `OSRM_URL` | `https://router.project-osrm.org` | your own OSRM server for production traffic |
+| `OVERPASS_URLS` | 3 public mirrors | comma-separated Overpass endpoints (raced in parallel) |
+| `OVERPASS_TIMEOUT_S` / `OSRM_TIMEOUT_S` | 25 / 4 | how long to wait before falling back |
+
+Real-data limits: OpenStreetMap entries in India often miss plug type and power ("check first"); prices and
+live occupancy are not published openly. 2-wheeler and battery-swap stations are filtered out.
 
 ## 7. Tests
 
 ```bash
-pytest -q          # 61 tests, ~10 s, no network
+pytest -q          # 82 tests, ~10 s, no network (external services are mocked)
 ```
 
-## 8. Deploy to Vercel
+## 8. Branches and deploying (Git → Vercel)
 
-The repo is ready as-is (`vercel.json`, `requirements.txt`, `app.py` exports `app`).
+```
+feature/*  ──PR──▶  develop (staging)  ──PR──▶  main (production)
+```
 
-1. vercel.com → **Add New → Project** → import `Charge-Wise`.
-2. Framework preset: **Other**. No build command, no output directory.
-3. Settings → Git → **Production Branch** = `vercel-ride-sim` (or merge into `main`).
-4. Deploy. Check `https://<project>.vercel.app/api/health` returns `"status": "ok"`.
+1. Branch from `develop`: `git checkout develop && git pull && git checkout -b feature/my-change`
+2. Commit, `git push -u origin feature/my-change`. Vercel builds a **preview URL** for the branch
+   (shown on the pull request and in Vercel → Deployments).
+3. Open a pull request into `develop`, check the preview, merge. `develop`'s preview is the staging site.
+4. When staging is good, open a pull request `develop → main`. Merging it is what deploys **production**.
 
-Or from the CLI: `npm i -g vercel && vercel --prod`.
+Vercel setup (once): Add New → Project → import `Charge-Wise`, framework preset **Other**, no build command.
+Production branch = `main` (Settings → Git). `vercel.json`, `requirements.txt` and `app.py` (exports `app`)
+are all it needs. Check `https://<deployment>/api/health` returns `"status": "ok"`.
 
 ## 9. Retrain the queue model (optional)
 
@@ -91,3 +109,5 @@ python ml/train.py        # rewrites data/model.json and data/metrics.json (seed
 | Map is grey | The map tiles come from openstreetmap.org: check your internet connection. The API still works. |
 | "Location permission was denied" | Allow location for the site in browser settings; on phones use the HTTPS (Vercel) URL. |
 | "API error" pill in the header | The server isn't running or crashed: check the terminal running uvicorn. |
+| "Real station data is unavailable" | Public OpenStreetMap servers are busy: wait a minute, or untick "Use real stations" to use the synthetic network. |
+| `CERTIFICATE_VERIFY_FAILED` locally | Behind a corporate proxy: `pip install -r requirements.txt` (includes `truststore`, which uses your OS certificates). |
