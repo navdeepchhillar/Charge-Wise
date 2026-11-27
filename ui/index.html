@@ -208,7 +208,7 @@ select{max-width:100%;text-overflow:ellipsis}
       </div>
       <div id="liveControls" hidden>
         <div class="controls"><button class="btn primary" id="liveBtn">📍 Start live tracking</button></div>
-        <p class="muted small">Your location stays in this browser and is only sent to this app's API to rank stations. Battery drops as you drive (estimated from distance); move the slider to correct it.</p>
+        <p class="muted small">No GPS? Tap the map to set where you are. Your location stays in this browser and is only sent to this app's API to rank stations. Battery drops as you drive (estimated from distance); move the slider to correct it.</p>
       </div>
     </section>
 
@@ -329,6 +329,7 @@ let probe = null;
 map.on("dragstart", () => setFollow(false));
 map.on("click", async (e) => {
   if (S.playing || LIVE.watch != null) return;
+  if (S.mode === "live") { setManualPosition([e.latlng.lat, e.latlng.lng]); return; }
   try {
     if (useReal() && !LIVE.real) { toast("Real stations are still loading…"); return; }
     const rec = await api("/api/recommend", { ...baseParams(), lat: e.latlng.lat, lng: e.latlng.lng, ...stationParams([e.latlng.lat, e.latlng.lng]),
@@ -712,12 +713,26 @@ function stopLive() {
   LIVE.watch = null;
   $("liveBtn").textContent = "📍 Start live tracking";
 }
+// No GPS (denied, desktop, indoors): a tap on the map sets the position and runs the same real-data flow.
+function setManualPosition(pt) {
+  if (probe) { probe.remove(); probe = null; }
+  LIVE.last = pt; LIVE.speed = null; LIVE.soc = +$("liveSoc").value;
+  S.carFrom = S.carTo = pt; S.carT0 = performance.now();
+  trail.setLatLngs([pt]);
+  if (map.getZoom() < 12) map.setView(pt, 13);
+  liveDash();
+  $("progText").textContent = "position set on the map";
+  toast("Position set. Finding the best stop from here…");
+  S.bestId = null;
+  ensureReal();
+  liveRecommend(true);
+}
 function onPosError(err) {
   stopLive();
   $("alert").className = "alert stranded";
   $("alert").textContent = err.code === 1
-    ? "Location permission was denied. Allow location for this site in your browser, or use Simulated ride."
-    : "Couldn't get your location (" + (err.message || "timeout") + "). Try again outdoors or use Simulated ride.";
+    ? "Location permission was denied. Allow location for this site in your browser, or tap the map to set where you are."
+    : "Couldn't get your location (" + (err.message || "timeout") + "). Try again outdoors, or tap the map to set where you are.";
 }
 function onPos(pos) {
   const pt = [pos.coords.latitude, pos.coords.longitude];

@@ -110,7 +110,7 @@ python ml/train.py        # rewrites data/model.json and data/metrics.json (seed
 | `ModuleNotFoundError: fastapi` | Activate the venv (`source .venv/bin/activate`) and reinstall. |
 | Port already in use | `uvicorn app:app --port 8001` |
 | Map is grey | The map tiles come from openstreetmap.org: check your internet connection. The API still works. |
-| "Location permission was denied" | Allow location for the site in browser settings; on phones use the HTTPS (Vercel) URL. |
+| "Location permission was denied" | Allow location for the site in browser settings (on phones use the HTTPS Vercel URL), or just **tap the map** to set where you are: the same real-data flow runs from that spot. |
 | "API error" pill in the header | The server isn't running or crashed: check the terminal running uvicorn. |
 | "Real station data is unavailable" | Public OpenStreetMap servers are busy: wait a minute, or untick "Use real stations" to use the synthetic network. |
 | `CERTIFICATE_VERIFY_FAILED` locally | Behind a corporate proxy: `pip install -r requirements.txt` (includes `truststore`, which uses your OS certificates). |
