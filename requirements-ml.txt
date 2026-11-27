@@ -1,0 +1,3 @@
+# Only for retraining the queue-wait model (python ml/train.py). Not needed to run the app.
+numpy>=1.26,<3
+scikit-learn>=1.4,<2
