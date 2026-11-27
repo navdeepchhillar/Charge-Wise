@@ -181,8 +181,8 @@ select{max-width:100%;text-overflow:ellipsis}
       <div id="liveOnly" hidden>
         <label for="liveSoc">Battery right now <span class="val" id="liveSocVal">50%</span></label>
         <input type="range" id="liveSoc" min="1" max="100" value="50">
-        <label class="check"><input type="checkbox" id="realStations"> Use real stations near me (Open Charge Map)</label>
-        <p class="muted small" id="realNote">Real station data needs an Open Charge Map key on the server; until then the synthetic Bengaluru network is used.</p>
+        <label class="check"><input type="checkbox" id="realStations" checked> Use real stations near me</label>
+        <p class="muted small" id="realNote">Real stations from OpenStreetMap (free community data, worldwide) with real road distances (OSRM). Many entries don't list plug type or power: those are marked "check first".</p>
       </div>
       <div class="row">
         <div><label for="reserve">Keep in reserve <span class="val" id="reserveVal">10%</span></label><input type="range" id="reserve" min="5" max="30" value="10"></div>
@@ -288,7 +288,9 @@ const S = {
   carFrom: null, carTo: null, carT0: 0, mode: "sim", vehicles: [],
   trip: { stops: 0, cost: 0, minutes: 0 },
 };
-const LIVE = { watch: null, last: null, lastSent: 0, km: 0, soc: 50, inflight: false, speed: null };
+const LIVE = { watch: null, last: null, lastSent: 0, km: 0, soc: 50, inflight: false, speed: null,
+  real: null, realLoading: false, realError: null };
+const REAL_REFETCH_KM = 8;
 const hav = (a, b) => { const R = 6371, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r;
   const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
 const vehicle = () => S.vehicles.find((x) => x.id === $("vehicle").value) || { battery_kwh: 50, wh_per_km: 160 };
@@ -322,7 +324,8 @@ map.on("dragstart", () => setFollow(false));
 map.on("click", async (e) => {
   if (S.playing || LIVE.watch != null) return;
   try {
-    const rec = await api("/api/recommend", { ...baseParams(), lat: e.latlng.lat, lng: e.latlng.lng, source: source(),
+    if (useReal() && !LIVE.real) { toast("Real stations are still loading…"); return; }
+    const rec = await api("/api/recommend", { ...baseParams(), lat: e.latlng.lat, lng: e.latlng.lng, ...stationParams([e.latlng.lat, e.latlng.lng]),
       soc: S.tel ? S.tel.soc : S.mode === "live" ? LIVE.soc : +$("soc").value, hour: S.tel ? S.tel.hour : S.leg.start_hour,
       minute: S.tel ? S.tel.minute : 0, day: S.tel ? S.tel.day : S.leg.day, limit: 200 });
     if (probe) probe.remove();
@@ -356,6 +359,11 @@ function drawStations() {
     m.bindPopup(() => stationPopup(st.id));
     S.markers.set(st.id, m);
   }
+}
+function setStationSet(list) {
+  for (const m of S.markers.values()) m.remove();
+  S.markers.clear(); S.stations = [];
+  syncMarkers(list);
 }
 function syncMarkers(list) {
   const known = new Set(S.stations.map((x) => x.id));
@@ -429,7 +437,14 @@ function updatePlay() {
 }
 
 function refresh() { if (S.mode === "live") liveRecommend(true); else poll(true); }
-function source() { return S.mode === "live" && $("realStations").checked ? "ocm" : "synthetic"; }
+function source() { return "synthetic"; }
+function useReal() { return S.mode === "live" && $("realStations").checked; }
+function stationParams(at) {
+  // live + real: send the real stations we fetched for this area (only those near enough to matter)
+  if (!useReal() || !LIVE.real) return { source: "synthetic" };
+  const near = LIVE.real.stations.filter((st) => hav(at, [st.lat, st.lng]) <= 45);
+  return { stations: near, stations_label: LIVE.real.label, road_routing: true };
+}
 function baseParams() {
   return { vehicle_id: $("vehicle").value, preset: S.preset, reserve_pct: +$("reserve").value, target_pct: +$("target").value };
 }
@@ -557,17 +572,18 @@ function renderRec(rec, probePoint, t) {
   } else {
     const fmt = (x, d = 0) => (x == null ? "?" : Number(x).toFixed(d));
     $("best").innerHTML = `
-      <div class="score">${Math.round(best.score)}<small>SCORE</small></div>
+      <div class="score" style="${rec.best_confirmed === false ? "background:#e0a100" : ""}">${Math.round(best.score)}<small>SCORE</small></div>
       <p class="name">${esc(best.name)}</p>
       <p class="sub">${liveChip(best)} ${esc(best.operator)} · ${best.power_kw ?? "?"} kW · ${esc(best.connectors.join(", "))} · ${best.count ?? "?"} plug${best.count === 1 ? "" : "s"} · ${esc(best.hours === "24x7" ? "open 24×7" : "open " + best.hours)}</p>
       <div class="facts">
-        <div><b>${fmt(best.road_km, 1)} km</b><span>${fmt(best.drive_min)} min drive</span></div>
+        <div><b>${best.distance_source === "road" ? "" : "≈ "}${fmt(best.road_km, 1)} km</b><span>${fmt(best.drive_min)} min ${best.distance_source === "road" ? "by road" : "drive (est.)"}</span></div>
         <div><b>${fmt(best.arrival_pct)}%</b><span>battery on arrival</span></div>
-        <div><b>~${fmt(best.wait_min)} min</b><span>queue (ML + live)</span></div>
-        <div><b>${fmt(best.charge_min)} min</b><span>to ${$("target").value}% at ${fmt(best.charge_kw)} kW</span></div>
+        <div><b>~${fmt(best.wait_min)} min</b><span>${best.live ? "queue (ML + live)" : "queue (ML estimate)"}</span></div>
+        <div><b>${best.charge_min == null ? "?" : fmt(best.charge_min)} min</b><span>${best.charge_kw ? `to ${$("target").value}% at ${fmt(best.charge_kw)} kW` : "power not listed"}</span></div>
         <div><b>${best.cost_inr != null ? "₹" + best.cost_inr : "?"}</b><span>${best.price_per_kwh != null ? "₹" + best.price_per_kwh + "/kWh" : "price unknown"}</span></div>
         <div><b>${fmt(best.uptime * 100)}%</b><span>uptime</span></div>
       </div>
+      ${rec.best_confirmed === false ? `<p class="note">Details unconfirmed: plug type or power isn't listed for any station near you. This is the best guess; check before going.</p>` : ""}
       <ul class="why">${best.reasons.map((r) => `<li class="pro">${esc(r)}</li>`).join("")}${best.cons.map((r) => `<li class="con">${esc(r)}</li>`).join("")}</ul>
       <div class="controls" style="margin-top:10px">
         ${S.mode === "sim" ? `<button class="btn primary" id="chargeBtn" ${probePoint ? "disabled title='Only from the car&#39;s position'" : ""}>⚡ Charge here</button>` : ""}
@@ -653,9 +669,11 @@ function setMode(mode) {
     $("speedNow").textContent = "–"; S.carTo = null;
     $("alert").className = "alert ok"; $("alert").textContent = "Press 📍 Start live tracking. Your browser will ask to share your location.";
     $("best").innerHTML = '<p class="empty">Waiting for your location…</p>'; $("alts").innerHTML = '<p class="empty">–</p>';
+    if (useReal()) setStationSet(LIVE.real ? LIVE.real.stations : []);
     liveDash();
   } else {
     stopLive(); trail.remove();
+    setStationSet(S.synthetic);
     loadRoute().then(resetRide);
   }
   setApi(true);
@@ -663,7 +681,11 @@ function setMode(mode) {
 $("modeSim").onclick = () => S.mode !== "sim" && setMode("sim");
 $("modeLive").onclick = () => S.mode !== "live" && setMode("live");
 $("liveSoc").addEventListener("input", () => { LIVE.soc = +$("liveSoc").value; $("liveSocVal").textContent = LIVE.soc + "%"; liveDash(); liveRecommend(true); });
-$("realStations").onchange = () => liveRecommend(true);
+$("realStations").onchange = () => {
+  if (useReal()) { setStationSet(LIVE.real ? LIVE.real.stations : []); ensureReal(true); }
+  else setStationSet(S.synthetic);
+  setApi(true); liveRecommend(true);
+};
 $("liveBtn").onclick = () => (LIVE.watch == null ? startLive() : stopLive());
 
 function startLive() {
@@ -705,7 +727,42 @@ function onPos(pos) {
   const svg = document.getElementById("carSvg");
   if (svg && pos.coords.heading != null && !isNaN(pos.coords.heading)) svg.style.transform = `rotate(${pos.coords.heading}deg)`;
   liveDash();
+  ensureReal();
   if (Date.now() - LIVE.lastSent > 4000) liveRecommend();
+}
+
+// Real stations: fetched once per area in the background (OpenStreetMap is slow on a cold area), cached 24 h.
+function realKey(pt) { return `cw-real-${Math.round(pt[0] / 0.05)}-${Math.round(pt[1] / 0.05)}`; }
+async function ensureReal(force) {
+  if (!useReal() || !LIVE.last || LIVE.realLoading) return;
+  if (LIVE.real && hav(LIVE.real.center, LIVE.last) < REAL_REFETCH_KM && !force) return;
+  if (LIVE.real && force && hav(LIVE.real.center, LIVE.last) < REAL_REFETCH_KM) return;
+  const key = realKey(LIVE.last);
+  try {
+    const c = JSON.parse(localStorage.getItem(key) || "null");
+    if (c && Date.now() - c.t < 86400000) { applyReal(c.data, true); return; }
+  } catch (_) {}
+  LIVE.realLoading = true; LIVE.realError = null;
+  if (!LIVE.real) { $("alert").className = "alert plan"; $("alert").textContent = "Loading real charging stations near you from OpenStreetMap… (first time in an area can take 10–30 s)"; }
+  try {
+    const d = await api(`/api/stations/near?lat=${LIVE.last[0].toFixed(4)}&lng=${LIVE.last[1].toFixed(4)}`);
+    try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), data: d })); } catch (_) {}
+    applyReal(d, false);
+  } catch (err) {
+    LIVE.realError = err.message;
+    if (!LIVE.real) {
+      toast("Couldn't load real stations: " + err.message);
+      $("alert").className = "alert stranded";
+      $("alert").textContent = "Real station data is unavailable right now. Untick \"Use real stations\" to use the synthetic network, or try again in a minute.";
+    }
+  } finally { LIVE.realLoading = false; }
+}
+function applyReal(d, cached) {
+  LIVE.real = { center: [d.lat, d.lng], stations: d.stations, label: d.sources.join(" + ") };
+  if (useReal()) setStationSet(d.stations);
+  $("realNote").textContent = `${d.count} real stations around you from ${d.sources.join(" + ")}${cached ? " (saved on this device)" : ""}. ${d.attribution}. Road distances: OSRM. Entries without plug details are marked "check first".`;
+  setApi(true);
+  liveRecommend(true);
 }
 function liveDash() {
   const now = new Date(), soc = LIVE.soc;
@@ -719,6 +776,7 @@ function liveDash() {
 }
 async function liveRecommend(force) {
   if (S.mode !== "live" || !LIVE.last || (LIVE.inflight && !force)) return;
+  if (useReal() && !LIVE.real) return;                         // still loading real stations
   LIVE.inflight = true; LIVE.lastSent = Date.now();
   const now = new Date();
   const tel = { lat: LIVE.last[0], lng: LIVE.last[1], soc: LIVE.soc, hour: now.getHours(), minute: now.getMinutes(),
@@ -726,7 +784,7 @@ async function liveRecommend(force) {
   S.tel = tel;
   try {
     const rec = await api("/api/recommend", { ...baseParams(), lat: tel.lat, lng: tel.lng, soc: tel.soc, hour: tel.hour,
-      minute: tel.minute, day: tel.day, limit: 200, sticky_id: S.bestId, source: source() });
+      minute: tel.minute, day: tel.day, limit: 200, sticky_id: S.bestId, ...stationParams(LIVE.last) });
     if (S.mode !== "live") return;
     setApi(true);
     $("rangeNow").textContent = Math.round(rec.range_km) + " km range (after reserve)";
@@ -740,7 +798,7 @@ async function liveRecommend(force) {
 }
 
 // ── Onboarding: four "Continue" steps ───────────────────────────────────
-const OB = { step: 0, vehicle: "mg-zs-ev", soc: 35, mode: "sim", route: "mysuru-highway" };
+const OB = { step: 0, vehicle: "mg-zs-ev", soc: 35, mode: "live", route: "mysuru-highway" };
 function obStore(v) { try { if (v === undefined) return localStorage.getItem("cw-onboarded"); localStorage.setItem("cw-onboarded", v); } catch (_) { return null; } }
 function obOpen() { OB.step = 0; OB.vehicle = $("vehicle").value || OB.vehicle; $("ob").hidden = false; obRender(); $("obNext").focus(); }
 function obClose() { $("ob").hidden = true; obStore("1"); }
@@ -768,8 +826,8 @@ function obRender() {
   } else {
     b.innerHTML = `<h2 id="obTitle">How do you want to try it?</h2>
       <div class="ob-grid">
-        <button class="ob-opt${OB.mode === "sim" ? " on" : ""}" data-m="sim"><b>🚗 Simulate a ride</b><span>A virtual car drives a real route at up to 300× speed. Best for a demo.</span></button>
-        <button class="ob-opt${OB.mode === "live" ? " on" : ""}" data-m="live"><b>📍 Use my location</b><span>Real GPS while you drive. Works on your phone.</span></button>
+        <button class="ob-opt${OB.mode === "live" ? " on" : ""}" data-m="live"><b>📍 Use my location <small style="color:var(--accent)">recommended</small></b><span>Your real position, real stations near you (OpenStreetMap) and real road distances. Works anywhere; best on your phone.</span></button>
+        <button class="ob-opt${OB.mode === "sim" ? " on" : ""}" data-m="sim"><b>🚗 Simulate a ride</b><span>A virtual car drives a Bengaluru route at up to 300× speed on synthetic data. Good for a demo.</span></button>
       </div>
       <div id="obRouteWrap" ${OB.mode === "sim" ? "" : "hidden"}><label for="obRoute">Route</label><select id="obRoute">${[...$("route").options].map((o) => `<option value="${esc(o.value)}"${o.value === OB.route ? " selected" : ""}>${esc(o.text)}</option>`).join("")}</select></div>`;
     b.querySelectorAll("[data-m]").forEach((el) => (el.onclick = () => { OB.mode = el.dataset.m; obRender(); }));
@@ -806,7 +864,7 @@ function toast(msg) {
 function setApi(ok, msg) {
   $("apiDot").className = "dot " + (ok ? "ok" : "bad");
   $("apiText").textContent = !ok ? "API error: " + (msg || "offline")
-    : S.mode === "live" ? (source() === "ocm" ? "Live GPS · real stations" : "Live GPS · synthetic stations") : "Simulated ride · synthetic data";
+    : S.mode === "live" ? (useReal() ? (LIVE.real ? `Live GPS · ${LIVE.real.label}` : "Live GPS · loading real stations") : "Live GPS · synthetic stations") : "Simulated ride · synthetic data";
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
@@ -819,8 +877,7 @@ async function loadRoute() {
   try {
     const [health, routes, vehicles, stations] = await Promise.all([api("/api/health"), api("/api/routes"), api("/api/vehicles"), api("/api/stations")]);
     $("modelVer").textContent = health.model_version;
-    $("realStations").disabled = !health.real_stations;
-    if (health.real_stations) $("realNote").textContent = "Real stations from Open Charge Map (refreshed every 10 min). Live plug counts stay simulated.";
+    S.synthetic = stations.slice();
     S.vehicles = vehicles; S.stations = stations;
     for (const r of routes) $("route").add(new Option(`${r.name} · ${r.length_km} km`, r.id));
     for (const v of vehicles) $("vehicle").add(new Option(`${v.name} · ${v.battery_kwh} kWh`, v.id, false, v.id === "mg-zs-ev"));
