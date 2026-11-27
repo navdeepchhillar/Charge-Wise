@@ -13,6 +13,7 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from . import data
+from .enrich import enrich
 from .geo import haversine_km
 from .live import availability
 from .providers import stations_for
@@ -28,6 +29,7 @@ WEIGHTS: Dict[str, Dict[str, float]] = {
     "cheapest": dict(travel=.10, wait=.10, charge=.10, cost=.45, buffer=.10, reliability=.10, detour=.05),
     "reliable": dict(travel=.10, wait=.10, charge=.10, cost=.05, buffer=.20, reliability=.35, detour=.10),
 }
+QUALITY_PENALTY = {"confirmed": 0.0, "likely": 3.0, "unknown": 0.0}   # small nudge towards confirmed data
 STICKY_BONUS = 4.0   # score points: another station must beat the current pick by more than this
 UTURN_KM = 4.5       # extra km to turn back on a divided highway
 SAFETY = 1.10        # +10% energy for A/C, traffic and estimation error
@@ -56,6 +58,9 @@ class StationIn(BaseModel):
     road: Literal["city", "highway"] = "city"
     source: str = "provided"
     power_assumed: bool = False
+    network: Optional[str] = None
+    inferred: List[str] = []
+    price_estimated: bool = False
 
 
 class RankRequest(BaseModel):
@@ -133,6 +138,7 @@ def rank(req: RankRequest) -> Dict:
         station_list, source_used, warning = [s.model_dump() for s in req.stations], req.stations_label, None
     else:
         station_list, source_used, warning = stations_for(req.source, req.lat, req.lng, req.radius_km)
+    station_list = [enrich(st) for st in station_list]          # fill gaps (operator → plugs/power, typical price)
     straight_of = {st["id"]: haversine_km(here, (st["lat"], st["lng"])) for st in station_list}
     in_radius = [st for st in station_list if straight_of[st["id"]] <= req.radius_km]
     routed, route_warning = {}, None
@@ -165,6 +171,8 @@ def rank(req: RankRequest) -> Dict:
         compatible = [c for c in st["connectors"] if c in v["connectors"]]
         if not st["connectors"]:
             cons.append("Connector type unknown, check before going"); verify = True
+            if st.get("note"):
+                cons.append(st["note"])
         elif not compatible:
             cons.append(f"No compatible connector (station has {', '.join(st['connectors'])})"); excluded = True
         if st["status"] == "offline":
@@ -197,8 +205,8 @@ def rank(req: RankRequest) -> Dict:
             wait = round(wait * 0.4, 1)                      # plugs free now and you're close: queue unlikely
             reasons.append(f"{live['free']} of {live['total']} plugs free right now (live)")
         cost = round(delivered * st["price_per_kwh"]) if st["price_per_kwh"] is not None else None
-        if cost is None:
-            cons.append("Price not published")
+        if st.get("price_estimated"):
+            cons.append(f"Price not published (est. ₹{st['price_per_kwh']:g}/kWh, typical for this charger type)")
 
         detour_km, ahead = None, None
         if route is not None:
@@ -227,10 +235,13 @@ def rank(req: RankRequest) -> Dict:
             "reliability": _clamp((st["uptime"] - 0.6) / 0.4),
             "detour": _clamp(1 - detour_km / 12) if detour_km is not None else 0.5,
         }
-        score = round(sum(weights[k] * comp[k] for k in weights) * 100, 1)
+        score = round(sum(weights[k] * comp[k] for k in weights) * 100 - QUALITY_PENALTY[st["data_quality"]], 1)
         rank_score = score + (STICKY_BONUS if st["id"] == req.sticky_id else 0.0)
 
-        if st.get("power_assumed"):
+        if st.get("network") and st["inferred"]:
+            cons.append(f"{' and '.join(st['inferred']).capitalize()} inferred from the operator "
+                        f"({st['network']}): confirm in its app")
+        elif "power" in st["inferred"]:
             cons.append(f"Power not listed (assumed {st['power_kw']:g} kW)")
         if dc and kw >= 50:
             reasons.append(f"Fast DC: {kw:.0f} kW for your car")
@@ -259,7 +270,8 @@ def rank(req: RankRequest) -> Dict:
             "charge_kw": round(kw, 1), "charge_min": round(charge_min, 1) if charge_min is not None else None,
             "cost_inr": cost, "detour_km": round(detour_km, 1) if detour_km is not None else None, "ahead": ahead,
             "total_min": round(minutes + wait + (charge_min or 0), 1), "live": live, "source": st.get("source"),
-            "distance_source": distance_source,
+            "distance_source": distance_source, "data_quality": st["data_quality"], "inferred": st["inferred"],
+            "network": st.get("network"), "price_estimated": st.get("price_estimated", False),
             "components": {k: round(x, 3) for k, x in comp.items()}, "reasons": reasons, "cons": cons,
         })
 
@@ -271,7 +283,7 @@ def rank(req: RankRequest) -> Dict:
     verify = [s for s in out if s["eligibility"] == "verify"]
     # confirmed stations always win; with sparse real data (no plug info) fall back to the best unconfirmed one
     best = eligible[0] if eligible else verify[0] if verify else None
-    best_confirmed = bool(eligible)
+    best_confirmed = bool(best and best["eligibility"] == "eligible" and best["data_quality"] == "confirmed")
 
     remaining_km = None
     if route is not None:
@@ -290,7 +302,7 @@ def rank(req: RankRequest) -> Dict:
     return {
         "vehicle": {"id": req.vehicle_id, **v}, "soc": req.soc, "range_km": round(range_km, 1),
         "remaining_route_km": round(remaining_km, 1) if remaining_km is not None else None,
-        "best": best, "best_confirmed": best_confirmed, "alert": alert, "preset": req.preset, "weights": weights,
+        "best": best, "best_confirmed": best_confirmed, "best_quality": best["data_quality"] if best else None, "alert": alert, "preset": req.preset, "weights": weights,
         "counts": {k: sum(1 for s in out if s["eligibility"] == k) for k in order},
         "stations": out[: req.limit], "model_version": model_version(),
         "source": source_used, "warning": " ".join(w for w in (warning, route_warning) if w) or None,
