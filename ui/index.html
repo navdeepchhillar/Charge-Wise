@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chargewise · Live ride</title>
+<meta name="description" content="Simulated EV ride that keeps picking the best and most reliable charging stop from where you are right now.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6f3; --panel:#ffffff; --ink:#14201a; --muted:#5d6b63; --line:#e2e8e3;
+  --accent:#0d9f6e; --accent-ink:#ffffff; --accent-soft:#e3f5ec;
+  --warn:#c77700; --warn-soft:#fff4df; --bad:#c9372c; --bad-soft:#fde8e6; --info:#2563eb; --info-soft:#e6eefe;
+  --grey:#9aa6a0; --radius:14px; --shadow:0 1px 2px rgba(0,0,0,.05),0 4px 16px rgba(0,0,0,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:8px;font-weight:750;font-size:17px;letter-spacing:-.2px}
+.logo svg{width:26px;height:26px}
+.tag{color:var(--muted);font-size:13px}
+.pill{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:3px 10px;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--grey)}
+.dot.ok{background:var(--accent)} .dot.bad{background:var(--bad)}
+main{display:grid;grid-template-columns:380px 1fr;height:calc(100vh - 53px)}
+aside{overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;border-right:1px solid var(--line)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow)}
+.card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650}
+label{display:block;font-size:12px;color:var(--muted);margin:8px 0 3px}
+select,input[type=range]{width:100%}
+select{font:inherit;padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{font:inherit;font-size:12px;border:0;background:var(--panel);padding:7px 2px;cursor:pointer;color:var(--ink)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.controls{display:flex;gap:8px;margin-top:12px}
+.btn{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:9px 12px;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);flex:1}
+.btn.small{padding:6px 10px;font-size:12px}
+.speeds{display:flex;gap:4px;margin-top:8px}
+.speeds button{flex:1;font:inherit;font-size:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:5px 0;cursor:pointer;color:var(--ink)}
+.speeds button.on{border-color:var(--accent);color:var(--accent);font-weight:700;background:var(--accent-soft)}
+.val{float:right;color:var(--ink);font-weight:600}
+.gauges{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.g{background:var(--bg);border-radius:10px;padding:8px}
+.g b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+.g span{font-size:11px;color:var(--muted)}
+.battery{height:14px;border-radius:7px;background:var(--line);overflow:hidden;margin:4px 0 10px;position:relative}
+.battery i{position:absolute;inset:0 auto 0 0;background:var(--accent);transition:width .4s,background .4s}
+.battery em{position:absolute;top:0;bottom:0;width:2px;background:var(--bad);opacity:.7}
+.progress{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px}
+.progress i{display:block;height:100%;background:var(--info);width:0;transition:width .4s}
+.alert{border-radius:var(--radius);padding:10px 12px;font-weight:600;display:flex;gap:8px;align-items:flex-start}
+.alert.ok{background:var(--accent-soft);color:#09603f}
+.alert.plan{background:var(--info-soft);color:#1d4ab8}
+.alert.charge_now{background:var(--warn-soft);color:#8a5200}
+.alert.stranded{background:var(--bad-soft);color:#9c241b}
+.best .name{font-size:16px;font-weight:700;margin:0}
+.best .sub{color:var(--muted);font-size:12px;margin:2px 0 8px}
+.score{float:right;text-align:center;background:var(--accent);color:var(--accent-ink);border-radius:10px;padding:4px 8px;font-weight:750;font-size:18px;line-height:1.1}
+.score small{display:block;font-size:9px;font-weight:600;opacity:.85;letter-spacing:.05em}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
+.facts div{background:var(--bg);border-radius:8px;padding:6px}
+.facts b{display:block;font-size:14px;font-variant-numeric:tabular-nums}
+.facts span{font-size:11px;color:var(--muted)}
+ul.why{list-style:none;margin:6px 0 0;padding:0;font-size:13px}
+ul.why li{padding:2px 0 2px 20px;position:relative}
+ul.why li::before{position:absolute;left:0;top:2px;font-weight:700}
+ul.why li.pro::before{content:"✓";color:var(--accent)}
+ul.why li.con::before{content:"!";color:var(--warn);left:4px}
+.alt{display:flex;align-items:center;gap:8px;padding:7px 4px;border-top:1px solid var(--line);cursor:pointer;border-radius:8px}
+.alt:first-of-type{border-top:0}
+.alt:hover{background:var(--bg)}
+.alt .n{flex:1;min-width:0}
+.alt .n b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.alt .n span{font-size:11px;color:var(--muted)}
+.bar{width:64px;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.alt .s{width:34px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.log{font-size:12px;max-height:150px;overflow-y:auto}
+.log div{padding:3px 0;border-top:1px dashed var(--line)}
+.log div:first-child{border-top:0}
+.log time{color:var(--muted);font-variant-numeric:tabular-nums;margin-right:6px}
+.muted{color:var(--muted)}
+.empty{color:var(--muted);font-size:13px}
+#mapwrap{position:relative}
+#map{position:absolute;inset:0}
+.legend{position:absolute;z-index:500;bottom:16px;left:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:12px;box-shadow:var(--shadow);display:flex;gap:10px;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:4px}
+.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
+.follow{position:absolute;z-index:500;top:12px;right:12px}
+.toast{position:fixed;z-index:1000;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:#fff;padding:10px 16px;border-radius:12px;font-weight:600;transition:all .3s;max-width:90vw;text-align:center}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.car{width:30px;height:30px;display:grid;place-items:center}
+.car svg{width:30px;height:30px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));transition:transform .3s}
+.st{border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.st.best{animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(13,159,110,.6)}70%{box-shadow:0 0 0 14px rgba(13,159,110,0)}100%{box-shadow:0 0 0 0 rgba(13,159,110,0)}}
+.leaflet-popup-content{font:13px/1.4 system-ui,sans-serif;margin:10px 12px}
+.leaflet-popup-content b{font-size:14px}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--bg);padding:4px;border-radius:11px;margin-bottom:4px}
+.modes button{font:inherit;font-weight:600;font-size:13px;border:0;border-radius:8px;padding:8px 4px;background:transparent;color:var(--muted);cursor:pointer}
+.modes button.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+label.check{display:flex;gap:6px;align-items:center;margin-top:10px;color:var(--ink)}
+.small{font-size:12px;margin:6px 0 0}
+.livechip{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--accent-soft);color:#09603f}
+.livechip.busy{background:var(--warn-soft);color:#8a5200}
+.livechip.fault{background:var(--bad-soft);color:#9c241b}
+.note{font-size:12px;background:var(--warn-soft);color:#8a5200;border-radius:10px;padding:8px 10px}
+.ob{position:fixed;inset:0;z-index:2000;background:rgba(10,20,15,.45);display:grid;place-items:center;padding:16px}
+.ob[hidden]{display:none}
+.ob-card{background:var(--panel);border-radius:18px;max-width:520px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.ob-dots{display:flex;gap:6px;margin-bottom:14px}
+.ob-dots i{height:4px;flex:1;border-radius:2px;background:var(--line)}
+.ob-dots i.on{background:var(--accent)}
+.ob h2{margin:0 0 6px;font-size:20px;letter-spacing:-.3px}
+.ob p{color:var(--muted);margin:0 0 12px}
+.ob-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ob-opt{border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;background:var(--panel);text-align:left;font:inherit;color:var(--ink)}
+.ob-opt b{display:block}
+.ob-opt span{font-size:12px;color:var(--muted)}
+.ob-opt.on{border-color:var(--accent);background:var(--accent-soft)}
+.ob-foot{display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:8px}
+.ob-big{font-size:34px;font-weight:800;text-align:center;margin:6px 0}
+@media (max-width:860px){
+  main{grid-template-columns:minmax(0,1fr);grid-template-rows:46vh auto;height:auto}
+  #mapwrap{order:-1;height:46vh}
+  aside{border-right:0;overflow:visible}
+  .tag{display:none}
+}
+@media (max-width:520px){
+  header{padding:8px 12px;gap:8px}
+  #apiText{display:none}
+  .pill{padding:6px}
+  .ob-grid{grid-template-columns:1fr}
+}
+.btn{white-space:nowrap}
+.row>div,.n{min-width:0}
+select{max-width:100%;text-overflow:ellipsis}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" fill="#0d9f6e"/><path d="M13 5 7.5 13H12l-1 6 5.5-8H12l1-6Z" fill="#fff"/></svg>
+    Chargewise
+  </div>
+  <span class="tag">Live ride · best charging stop from where you are now</span>
+  <button class="btn small" id="setupBtn" style="margin-left:auto">⚙ Setup</button>
+  <span class="pill" id="apiPill" style="margin-left:0"><i class="dot" id="apiDot"></i><span id="apiText">connecting…</span></span>
+</header>
+<main>
+  <aside>
+    <section class="card" aria-label="Ride setup">
+      <div class="modes" role="tablist" aria-label="Mode">
+        <button role="tab" id="modeSim" class="on" aria-selected="true">🚗 Simulated ride</button>
+        <button role="tab" id="modeLive" aria-selected="false">📍 Live GPS</button>
+      </div>
+      <label for="vehicle">Vehicle</label>
+      <select id="vehicle"></select>
+      <div id="simOnly">
+        <label for="route">Route</label>
+        <select id="route"></select>
+        <div class="row">
+          <div>
+            <label for="startHour">Start time</label>
+            <select id="startHour"></select>
+          </div>
+          <div>
+            <label for="day">Day</label>
+            <select id="day"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2" selected>Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select>
+          </div>
+        </div>
+        <label for="soc">Battery at start <span class="val" id="socVal">35%</span></label>
+        <input type="range" id="soc" min="5" max="100" value="35">
+      </div>
+      <div id="liveOnly" hidden>
+        <label for="liveSoc">Battery right now <span class="val" id="liveSocVal">50%</span></label>
+        <input type="range" id="liveSoc" min="1" max="100" value="50">
+        <label class="check"><input type="checkbox" id="realStations" checked> Use real stations near me</label>
+        <p class="muted small" id="realNote">Real stations from OpenStreetMap (free community data, worldwide) with real road distances (OSRM). Many entries don't list plug type or power: those are marked "check first".</p>
+      </div>
+      <div class="row">
+        <div><label for="reserve">Keep in reserve <span class="val" id="reserveVal">10%</span></label><input type="range" id="reserve" min="5" max="30" value="10"></div>
+        <div><label for="target">Charge up to <span class="val" id="targetVal">80%</span></label><input type="range" id="target" min="50" max="100" step="5" value="80"></div>
+      </div>
+      <label>What matters most</label>
+      <div class="seg" id="preset" role="group" aria-label="Preference">
+        <button data-p="balanced" class="on">Balanced</button><button data-p="fastest">Fastest</button><button data-p="cheapest">Cheapest</button><button data-p="reliable">Reliable</button>
+      </div>
+      <div id="simControls">
+        <div class="controls">
+          <button class="btn primary" id="play">▶ Start ride</button>
+          <button class="btn" id="reset" title="Back to the start">↺ Reset</button>
+        </div>
+        <label class="check"><input type="checkbox" id="autoPause" checked> Pause the ride when I need to charge</label>
+        <div class="speeds" id="speeds" role="group" aria-label="Simulation speed">
+          <button data-s="10">10×</button><button data-s="30">30×</button><button data-s="60" class="on">60×</button><button data-s="120">120×</button><button data-s="300">300×</button>
+        </div>
+      </div>
+      <div id="liveControls" hidden>
+        <div class="controls"><button class="btn primary" id="liveBtn">📍 Start live tracking</button></div>
+        <p class="muted small">Your location stays in this browser and is only sent to this app's API to rank stations. Battery drops as you drive (estimated from distance); move the slider to correct it.</p>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Trip summary" id="tripCard" hidden>
+      <h3>This trip</h3>
+      <div class="gauges">
+        <div class="g"><b id="tripStops">0</b><span>charging stops</span></div>
+        <div class="g"><b id="tripCost">₹0</b><span>spent on charging</span></div>
+        <div class="g"><b id="tripMin">0</b><span>min charging + waiting</span></div>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Live dashboard">
+      <h3>Live dashboard</h3>
+      <div><b id="socNow">35%</b> <span class="muted">battery</span> <span class="val muted" id="rangeNow">– km range</span></div>
+      <div class="battery"><i id="battBar" style="width:35%"></i><em id="reserveMark" style="left:10%"></em></div>
+      <div class="gauges">
+        <div class="g"><b id="speedNow">0</b><span>km/h</span></div>
+        <div class="g"><b id="clockNow">09:00</b><span id="dayNow">Wednesday</span></div>
+        <div class="g"><b id="etaNow">–</b><span>min to destination</span></div>
+      </div>
+      <div class="progress"><i id="progBar"></i></div>
+      <div class="muted" style="font-size:12px;margin-top:4px"><span id="progText">0 / 0 km</span> · <span id="roadNow">city</span> road</div>
+    </section>
+
+    <div class="alert ok" id="alert" role="status" aria-live="polite">Press <b>Start ride</b> to begin.</div>
+
+    <section class="card best" aria-label="Best station" id="bestCard">
+      <h3>Best charging stop right now</h3>
+      <div id="best"><p class="empty">Recommendations appear as soon as the ride starts. Tip: click anywhere on the map (while paused) to check the best stop from that spot.</p></div>
+    </section>
+
+    <section class="card" aria-label="Alternatives">
+      <h3>Other good options</h3>
+      <div id="alts"><p class="empty">–</p></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0" id="counts"></p>
+    </section>
+
+    <section class="card" aria-label="Decision log">
+      <h3>Decision log</h3>
+      <div class="log" id="log"><p class="empty">Every time the best stop changes, it is noted here with the reason.</p></div>
+    </section>
+    <p class="muted" style="font-size:11px;margin:0 2px 8px">Simulated mode: stations, prices, traffic and the live plug feed are synthetic. Queue waits come from a decision tree trained on synthetic sessions (<span id="modelVer">–</span>). Not for real navigation.</p>
+  </aside>
+  <div id="mapwrap">
+    <div id="map" aria-label="Map"></div>
+    <button class="btn small follow" id="follow" aria-pressed="true">◎ Following car</button>
+    <div class="legend">
+      <span><i style="background:#0d9f6e"></i>Best</span>
+      <span><i style="background:#34c48b"></i>Good</span>
+      <span><i style="background:#e0a100"></i>Check first</span>
+      <span><i style="background:#b9c2bd"></i>Not usable / out of reach</span>
+    </div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<div class="ob" id="ob" hidden role="dialog" aria-modal="true" aria-labelledby="obTitle">
+  <div class="ob-card">
+    <div class="ob-dots" id="obDots"><i></i><i></i><i></i><i></i></div>
+    <div id="obBody"></div>
+    <div class="ob-foot">
+      <button class="btn" id="obSkip">Skip</button>
+      <div style="display:flex;gap:8px"><button class="btn" id="obBack">Back</button><button class="btn primary" id="obNext">Continue →</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const POLL_MS = 600;
+
+const S = {
+  preset: "balanced", speed: 60, playing: false, follow: true,
+  route: null, stations: [], markers: new Map(),
+  leg: { start_km: 0, start_soc: 35, start_hour: 9, start_minute: 0, day: 2 },
+  elapsed: 0, lastFrame: 0, inflight: false, lastPoll: 0,
+  tel: null, rec: null, bestId: null, finished: false, warned: false,
+  carFrom: null, carTo: null, carT0: 0, mode: "sim", vehicles: [],
+  trip: { stops: 0, cost: 0, minutes: 0 },
+};
+const LIVE = { watch: null, last: null, lastSent: 0, km: 0, soc: 50, inflight: false, speed: null,
+  real: null, realLoading: false, realError: null };
+const REAL_REFETCH_KM = 8;
+const hav = (a, b) => { const R = 6371, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r;
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+const vehicle = () => S.vehicles.find((x) => x.id === $("vehicle").value) || { battery_kwh: 50, wh_per_km: 160 };
+const pad = (n) => String(n).padStart(2, "0");
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
+  if (!r.ok) {
+    let msg = r.status + "";
+    let detail = null;
+    try { const j = await r.json(); detail = j.detail; msg = typeof j.detail === "string" ? j.detail : (j.detail && j.detail.message) || JSON.stringify(j.detail); } catch (_) {}
+    const e = new Error(msg); e.status = r.status; e.detail = detail;
+    throw e;
+  }
+  return r.json();
+}
+
+// ── Map ────────────────────────────────────────────────────────────────
+const map = L.map("map", { zoomControl: true, preferCanvas: false }).setView([12.97, 77.6], 12);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+}).addTo(map);
+const aheadLine = L.polyline([], { color: "#8aa198", weight: 5, opacity: .55, dashArray: "1 8", lineCap: "round" }).addTo(map);
+const doneLine = L.polyline([], { color: "#2563eb", weight: 6, opacity: .85, lineCap: "round" }).addTo(map);
+const toBest = L.polyline([], { color: "#0d9f6e", weight: 3, dashArray: "6 6" }).addTo(map);
+const carIcon = L.divIcon({ className: "", iconSize: [30, 30], iconAnchor: [15, 15],
+  html: '<div class="car"><svg viewBox="0 0 30 30" id="carSvg"><circle cx="15" cy="15" r="13" fill="#2563eb" stroke="#fff" stroke-width="3"/><path d="M15 6 21 21 15 17.5 9 21Z" fill="#fff"/></svg></div>' });
+const car = L.marker([12.97, 77.6], { icon: carIcon, zIndexOffset: 1000, keyboard: false }).addTo(map);
+const trail = L.polyline([], { color: "#2563eb", weight: 5, opacity: .8, lineCap: "round" });
+let probe = null;
+
+map.on("dragstart", () => setFollow(false));
+map.on("click", async (e) => {
+  if (S.playing || LIVE.watch != null) return;
+  try {
+    if (useReal() && !LIVE.real) { toast("Real stations are still loading…"); return; }
+    const rec = await api("/api/recommend", { ...baseParams(), lat: e.latlng.lat, lng: e.latlng.lng, ...stationParams([e.latlng.lat, e.latlng.lng]),
+      soc: S.tel ? S.tel.soc : S.mode === "live" ? LIVE.soc : +$("soc").value, hour: S.tel ? S.tel.hour : S.leg.start_hour,
+      minute: S.tel ? S.tel.minute : 0, day: S.tel ? S.tel.day : S.leg.day, limit: 200 });
+    if (probe) probe.remove();
+    probe = L.circleMarker(e.latlng, { radius: 7, color: "#2563eb", fillColor: "#fff", fillOpacity: 1, weight: 3 }).addTo(map)
+      .bindTooltip("Checked from here", { permanent: false });
+    renderRec(rec, e.latlng);
+    toast("Showing the best stop from the spot you clicked");
+  } catch (err) { toast("Couldn't check that spot: " + err.message); }
+});
+
+function setFollow(on) {
+  S.follow = on;
+  $("follow").textContent = on ? "◎ Following car" : "◎ Follow car";
+  $("follow").setAttribute("aria-pressed", on);
+  if (on && S.tel) map.panTo([S.tel.lat, S.tel.lng]);
+}
+$("follow").onclick = () => setFollow(!S.follow);
+
+function stationColor(s, isBest) {
+  if (isBest) return "#0d9f6e";
+  if (!s) return "#b9c2bd";
+  if (s.eligibility === "eligible") return "#34c48b";
+  if (s.eligibility === "verify") return "#e0a100";
+  return "#b9c2bd";
+}
+function drawStations() {
+  for (const m of S.markers.values()) m.remove();
+  S.markers.clear();
+  for (const st of S.stations) {
+    const m = L.marker([st.lat, st.lng], { icon: stIcon("#b9c2bd", false, st.power_kw >= 25) }).addTo(map);
+    m.bindPopup(() => stationPopup(st.id));
+    S.markers.set(st.id, m);
+  }
+}
+function setStationSet(list) {
+  for (const m of S.markers.values()) m.remove();
+  S.markers.clear(); S.stations = [];
+  syncMarkers(list);
+}
+function syncMarkers(list) {
+  const known = new Set(S.stations.map((x) => x.id));
+  for (const st of list) {
+    if (known.has(st.id)) continue;
+    S.stations.push(st); known.add(st.id);
+    const m = L.marker([st.lat, st.lng], { icon: stIcon("#b9c2bd", false, st.power_kw >= 25) }).addTo(map);
+    m.bindPopup(() => stationPopup(st.id));
+    S.markers.set(st.id, m);
+  }
+}
+function liveChip(s) {
+  if (!s || !s.live) return "";
+  if (s.live.fault) return `<span class="livechip fault">fault · ${esc(s.live.updated)}</span>`;
+  return `<span class="livechip${s.live.free ? "" : " busy"}">${s.live.free}/${s.live.total} free · live ${esc(s.live.updated)}</span>`;
+}
+function stIcon(color, best, dc) {
+  const size = best ? 22 : dc ? 15 : 12;
+  return L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
+    html: `<div class="st${best ? " best" : ""}" style="width:${size}px;height:${size}px;background:${color}"></div>` });
+}
+function stationPopup(id) {
+  const base = S.stations.find((x) => x.id === id) || {};
+  const r = (S.rec && S.rec.stations.find((x) => x.id === id)) || null;
+  let h = `<b>${esc(base.name)}</b><br><span class="muted">${esc(base.operator)} · ${base.power_kw ?? "?"} kW · ${esc((base.connectors || []).join(", ") || "connector unknown")} · ${base.count ?? "?"} plug${base.count === 1 ? "" : "s"}</span>`;
+  if (r) {
+    h += `<br>${liveChip(r)} ${r.road_km} km · ${Math.round(r.drive_min)} min drive · arrive ${Math.round(r.arrival_pct)}%`;
+    h += `<br>Wait ~${Math.round(r.wait_min)} min · charge ${r.charge_min != null ? Math.round(r.charge_min) + " min" : "?"} · ${r.cost_inr != null ? "₹" + r.cost_inr : "price ?"}`;
+    if (r.cons.length) h += `<br><span style="color:#8a5200">${r.cons.map(esc).join("<br>")}</span>`;
+  } else h += `<br><span class="muted">Outside the search radius</span>`;
+  return h;
+}
+
+// ── Controls ───────────────────────────────────────────────────────────
+for (let h = 0; h < 24; h++) $("startHour").add(new Option(`${String(h).padStart(2, "0")}:00`, h, false, h === 9));
+for (const [id, out] of [["soc", "socVal"], ["reserve", "reserveVal"], ["target", "targetVal"]]) {
+  $(id).addEventListener("input", () => {
+    $(out).textContent = $(id).value + "%";
+    $("reserveMark").style.left = $("reserve").value + "%";
+    if (S.mode === "live") liveRecommend(true);
+    else if (id === "soc" || (!S.playing && S.elapsed === 0 && S.leg.start_km === 0)) { if (S.elapsed === 0 && S.leg.start_km === 0) resetRide(); }
+    else poll(true);
+  });
+}
+$("preset").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.preset = b.dataset.p;
+  for (const x of $("preset").children) x.classList.toggle("on", x === b);
+  refresh();
+});
+$("speeds").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  S.speed = +b.dataset.s;
+  for (const x of $("speeds").children) x.classList.toggle("on", x === b);
+});
+$("route").onchange = () => loadRoute().then(resetRide);
+$("vehicle").onchange = () => (S.mode === "live" ? liveRecommend(true) : resetRide());
+$("startHour").onchange = () => resetRide();
+$("day").onchange = () => resetRide();
+$("reset").onclick = () => resetRide();
+$("play").onclick = () => {
+  if (S.finished) { resetRide(); }
+  S.playing = !S.playing;
+  if (probe) { probe.remove(); probe = null; }
+  if (S.playing) setFollow(true);
+  S.lastFrame = performance.now();
+  updatePlay();
+};
+function updatePlay() {
+  $("play").textContent = S.playing ? "❚❚ Pause" : S.finished ? "▶ Ride again" : (S.elapsed > 0 || S.leg.start_km > 0) ? "▶ Resume" : "▶ Start ride";
+}
+
+function refresh() { if (S.mode === "live") liveRecommend(true); else poll(true); }
+function source() { return "synthetic"; }
+function useReal() { return S.mode === "live" && $("realStations").checked; }
+function stationParams(at) {
+  // live + real: send the real stations we fetched for this area (only those near enough to matter)
+  if (!useReal() || !LIVE.real) return { source: "synthetic" };
+  const near = LIVE.real.stations.filter((st) => hav(at, [st.lat, st.lng]) <= 45);
+  return { stations: near, stations_label: LIVE.real.label, road_routing: true };
+}
+function baseParams() {
+  return { vehicle_id: $("vehicle").value, preset: S.preset, reserve_pct: +$("reserve").value, target_pct: +$("target").value };
+}
+
+function resetRide() {
+  S.playing = false; S.finished = false; S.elapsed = 0; S.bestId = null; S.warned = false;
+  S.leg = { start_km: 0, start_soc: +$("soc").value, start_hour: +$("startHour").value, start_minute: 0, day: +$("day").value };
+  S.carFrom = S.carTo = null;
+  S.trip = { stops: 0, cost: 0, minutes: 0 }; renderTrip();
+  $("log").innerHTML = '<p class="empty">Every time the best stop changes, it is noted here with the reason.</p>';
+  $("reserveMark").style.left = $("reserve").value + "%";
+  if (probe) { probe.remove(); probe = null; }
+  updatePlay();
+  poll(true);
+}
+
+// ── Ride loop ──────────────────────────────────────────────────────────
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.25, (now - (S.lastFrame || now)) / 1000));
+  S.lastFrame = now;
+  if (S.playing) {
+    S.elapsed += dt * S.speed;
+    if (now - S.lastPoll > POLL_MS) poll();
+  }
+  animateCar(now);
+  requestAnimationFrame(frame);
+}
+
+async function poll(force) {
+  if (S.inflight && !force) return;
+  if (!S.route) return;
+  S.inflight = true; S.lastPoll = performance.now();
+  const body = { ...baseParams(), route_id: S.route.id, start_soc: S.leg.start_soc, start_km: S.leg.start_km,
+    elapsed_s: Math.max(0, S.elapsed), start_hour: S.leg.start_hour, start_minute: S.leg.start_minute, day: S.leg.day, limit: 200,
+    sticky_id: S.bestId };
+  try {
+    const r = await api("/api/ride/state", body);
+    if (body.route_id !== S.route.id) return;
+    setApi(true);
+    applyState(r);
+  } catch (err) {
+    setApi(false, err.message);
+  } finally { S.inflight = false; }
+}
+
+function applyState({ telemetry: t, recommendation: rec }) {
+  const prev = S.tel;
+  S.tel = t;
+  // car: glide from where it is drawn now to the new point over one poll interval
+  const cur = car.getLatLng();
+  S.carFrom = prev ? [cur.lat, cur.lng] : [t.lat, t.lng];
+  S.carTo = [t.lat, t.lng]; S.carT0 = performance.now();
+  const svg = document.getElementById("carSvg");
+  if (svg) svg.style.transform = `rotate(${t.heading}deg)`;
+
+  const path = S.route.path;
+  const i = t.segment_index;
+  doneLine.setLatLngs(path.slice(0, i + 1).concat([[t.lat, t.lng]]));
+  aheadLine.setLatLngs([[t.lat, t.lng]].concat(path.slice(i + 1)));
+
+  $("socNow").textContent = t.soc.toFixed(1) + "%";
+  $("battBar").style.width = t.soc + "%";
+  $("battBar").style.background = t.soc <= +$("reserve").value + 8 ? "var(--bad)" : t.soc < 30 ? "var(--warn)" : "var(--accent)";
+  $("rangeNow").textContent = Math.round(rec.range_km) + " km range (after reserve)";
+  $("speedNow").textContent = Math.round(t.speed_kmh);
+  $("clockNow").textContent = t.clock;
+  $("dayNow").textContent = DAYS[t.day];
+  $("etaNow").textContent = t.finished ? "0" : Math.round(t.eta_min);
+  $("progBar").style.width = (100 * t.progress_km / t.route_km) + "%";
+  $("progText").textContent = `${t.progress_km.toFixed(1)} / ${t.route_km.toFixed(1)} km`;
+  $("roadNow").textContent = t.road;
+
+  if (t.finished || t.stranded) {
+    if (S.playing) toast(t.finished ? `Arrived with ${t.soc.toFixed(0)}% battery` : "Out of battery: the car is stranded. Reset and try charging earlier.");
+    S.playing = false; S.finished = true; updatePlay();
+  }
+  renderRec(rec, null, t);
+  if (t.stranded) {
+    $("alert").className = "alert stranded";
+    $("alert").textContent = `Battery empty: stranded at km ${t.progress_km.toFixed(1)}. Press Reset and charge earlier (the alert warned you at the start).`;
+  } else if (rec.alert.level === "charge_now" && !S.warned && S.playing && $("autoPause").checked) {
+    S.warned = true; S.playing = false; updatePlay();
+    toast("Battery low: ride paused. Tap ⚡ Charge here or pick another stop.");
+  }
+}
+
+function animateCar(now) {
+  if (!S.carTo) return;
+  const k = Math.min(1, (now - S.carT0) / POLL_MS);
+  const a = S.carFrom || S.carTo;
+  const p = [a[0] + (S.carTo[0] - a[0]) * k, a[1] + (S.carTo[1] - a[1]) * k];
+  car.setLatLng(p);
+  const best = S.rec && S.rec.best;
+  toBest.setLatLngs(best && !probe ? [p, [best.lat, best.lng]] : []);
+  if (S.follow && (S.playing || LIVE.watch != null)) map.panTo(p, { animate: false });
+}
+
+// ── Recommendation rendering ───────────────────────────────────────────
+function renderRec(rec, probePoint, t) {
+  S.rec = rec;
+  syncMarkers(rec.stations);
+  const a = rec.alert;
+  $("alert").className = "alert " + a.level;
+  $("alert").textContent = a.message;
+  if (rec.stations.length === 0) {
+    $("alert").className = "alert plan";
+    $("alert").textContent = rec.source === "ocm"
+      ? "No charging stations found within the search radius of this spot."
+      : "No stations in the data near this spot. The synthetic network covers Bengaluru and the Mysuru highway; switch on real stations (Live GPS) to search anywhere.";
+  }
+  if (rec.warning) $("alert").insertAdjacentHTML("beforeend", `<div class="note" style="margin-top:6px;font-weight:500">${esc(rec.warning)}</div>`);
+  const best = rec.best;
+
+  // markers
+  const byId = new Map(rec.stations.map((s) => [s.id, s]));
+  for (const [id, m] of S.markers) {
+    const s = byId.get(id), isBest = best && best.id === id;
+    m.setIcon(stIcon(stationColor(s, isBest), isBest, (S.stations.find((x) => x.id === id) || {}).power_kw >= 25));
+    m.setZIndexOffset(isBest ? 900 : s && s.eligibility === "eligible" ? 500 : 0);
+  }
+  if (probePoint) toBest.setLatLngs(best ? [probePoint, [best.lat, best.lng]] : []);
+
+  if (!best) {
+    $("best").innerHTML = '<p class="empty">No usable station within reach. Look for amber markers ("check first") or lower the reserve.</p>';
+  } else {
+    const fmt = (x, d = 0) => (x == null ? "?" : Number(x).toFixed(d));
+    $("best").innerHTML = `
+      <div class="score" style="${rec.best_confirmed === false ? "background:#e0a100" : ""}">${Math.round(best.score)}<small>SCORE</small></div>
+      <p class="name">${esc(best.name)}</p>
+      <p class="sub">${liveChip(best)} ${esc(best.operator)} · ${best.power_kw ?? "?"} kW · ${esc(best.connectors.join(", "))} · ${best.count ?? "?"} plug${best.count === 1 ? "" : "s"} · ${esc(best.hours === "24x7" ? "open 24×7" : "open " + best.hours)}</p>
+      <div class="facts">
+        <div><b>${best.distance_source === "road" ? "" : "≈ "}${fmt(best.road_km, 1)} km</b><span>${fmt(best.drive_min)} min ${best.distance_source === "road" ? "by road" : "drive (est.)"}</span></div>
+        <div><b>${fmt(best.arrival_pct)}%</b><span>battery on arrival</span></div>
+        <div><b>~${fmt(best.wait_min)} min</b><span>${best.live ? "queue (ML + live)" : "queue (ML estimate)"}</span></div>
+        <div><b>${best.charge_min == null ? "?" : fmt(best.charge_min)} min</b><span>${best.charge_kw ? `to ${$("target").value}% at ${fmt(best.charge_kw)} kW` : "power not listed"}</span></div>
+        <div><b>${best.cost_inr != null ? "₹" + best.cost_inr : "?"}</b><span>${best.price_per_kwh != null ? "₹" + best.price_per_kwh + "/kWh" : "price unknown"}</span></div>
+        <div><b>${fmt(best.uptime * 100)}%</b><span>uptime</span></div>
+      </div>
+      ${rec.best_confirmed === false ? `<p class="note">Details unconfirmed: plug type or power isn't listed for any station near you. This is the best guess; check before going.</p>` : ""}
+      <ul class="why">${best.reasons.map((r) => `<li class="pro">${esc(r)}</li>`).join("")}${best.cons.map((r) => `<li class="con">${esc(r)}</li>`).join("")}</ul>
+      <div class="controls" style="margin-top:10px">
+        ${S.mode === "sim" ? `<button class="btn primary" id="chargeBtn" ${probePoint ? "disabled title='Only from the car&#39;s position'" : ""}>⚡ Charge here</button>` : ""}
+        <a class="btn ${S.mode === "live" ? "primary" : ""}" id="navBtn" target="_blank" rel="noopener" style="text-decoration:none;text-align:center"
+           href="https://www.google.com/maps/dir/?api=1&destination=${best.lat},${best.lng}&travelmode=driving">🧭 Navigate</a>
+        <button class="btn" id="showBtn">Map</button>
+      </div>`;
+    $("showBtn").onclick = () => { setFollow(false); map.setView([best.lat, best.lng], 15); S.markers.get(best.id)?.openPopup(); };
+    const cb = $("chargeBtn");
+    if (cb && !probePoint) cb.onclick = () => chargeAt(best);
+  }
+
+  const alts = rec.stations.filter((s) => s.eligibility !== "excluded" && (!best || s.id !== best.id)).slice(0, 5);
+  $("alts").innerHTML = alts.length ? alts.map((s) => `
+    <div class="alt" data-id="${esc(s.id)}" tabindex="0">
+      <div class="n"><b>${esc(s.name)}</b><span>${liveChip(s)} ${s.road_km} km · arrive ${Math.round(s.arrival_pct)}% · wait ~${Math.round(s.wait_min)} min${s.eligibility === "verify" ? " · check first" : ""}</span></div>
+      <div class="bar"><i style="width:${s.score}%;background:${s.eligibility === "verify" ? "#e0a100" : "var(--accent)"}"></i></div>
+      <div class="s">${Math.round(s.score)}</div>
+    </div>`).join("") : '<p class="empty">No other usable stations nearby.</p>';
+  for (const el of $("alts").querySelectorAll(".alt")) {
+    const go = () => { const s = rec.stations.find((x) => x.id === el.dataset.id); setFollow(false); map.setView([s.lat, s.lng], 15); S.markers.get(s.id)?.openPopup(); };
+    el.onclick = go; el.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  }
+  $("counts").textContent = `${rec.counts.eligible} usable · ${rec.counts.verify} to check · ${rec.counts.excluded} ruled out (offline, closed, private, wrong plug or out of reach)`;
+
+  if (t && !probePoint) {
+    const id = best ? best.id : null;
+    if (id !== S.bestId) {
+      const why = best ? (best.reasons[0] || "best overall score") : "nothing reachable";
+      logLine(t.clock, best ? `Best stop → <b>${esc(best.name)}</b> (${best.road_km} km, score ${Math.round(best.score)}): ${esc(why)}` : `<b>No reachable station</b>`);
+      S.bestId = id;
+    }
+  }
+}
+
+function logLine(clock, html) {
+  const log = $("log");
+  if (log.querySelector(".empty")) log.innerHTML = "";
+  const d = document.createElement("div");
+  d.innerHTML = `<time>${esc(clock)}</time>${html}`;
+  log.prepend(d);
+  while (log.children.length > 40) log.lastChild.remove();
+}
+
+function chargeAt(best) {
+  const t = S.tel; if (!t) return;
+  // drive there, queue, charge, and drive back to the route: then the ride continues from here
+  const mins = best.drive_min * 2 + best.wait_min + (best.charge_min || 0);
+  const total = t.hour * 60 + t.minute + mins;
+  const newSoc = Math.max(+$("target").value, best.arrival_pct) - (best.energy_kwh / S.tel_cap()) * 100;
+  logLine(t.clock, `⚡ Charged at <b>${esc(best.name)}</b>: ${Math.round(best.arrival_pct)}% → ${$("target").value}% in ${Math.round(best.charge_min || 0)} min${best.cost_inr != null ? ", ₹" + best.cost_inr : ""}. Back on the route after ${Math.round(mins)} min.`);
+  S.leg = { start_km: t.progress_km, start_soc: Math.max(0, Math.min(100, newSoc)), start_hour: Math.floor(total / 60) % 24,
+    start_minute: Math.floor(total % 60), day: (t.day + Math.floor(total / 1440)) % 7 };
+  S.elapsed = 0; S.finished = false; S.bestId = null; S.warned = false;
+  S.trip.stops += 1; S.trip.cost += best.cost_inr || 0; S.trip.minutes += best.wait_min + (best.charge_min || 0); renderTrip();
+  toast(`Charged to ${$("target").value}% at ${best.name}`);
+  updatePlay();
+  poll(true);
+}
+S.tel_cap = () => vehicle().battery_kwh;
+function renderTrip() {
+  $("tripCard").hidden = S.mode !== "sim" || S.trip.stops === 0;
+  $("tripStops").textContent = S.trip.stops;
+  $("tripCost").textContent = "₹" + Math.round(S.trip.cost);
+  $("tripMin").textContent = Math.round(S.trip.minutes);
+}
+
+// ── Modes: simulated ride vs live GPS ───────────────────────────────────
+function setMode(mode) {
+  S.mode = mode;
+  $("modeSim").classList.toggle("on", mode === "sim"); $("modeSim").setAttribute("aria-selected", mode === "sim");
+  $("modeLive").classList.toggle("on", mode === "live"); $("modeLive").setAttribute("aria-selected", mode === "live");
+  for (const id of ["simOnly", "simControls"]) $(id).hidden = mode !== "sim";
+  for (const id of ["liveOnly", "liveControls"]) $(id).hidden = mode !== "live";
+  if (probe) { probe.remove(); probe = null; }
+  S.bestId = null; S.warned = false; S.tel = null;
+  $("log").innerHTML = '<p class="empty">Every time the best stop changes, it is noted here with the reason.</p>';
+  renderTrip();
+  if (mode === "live") {
+    S.playing = false; updatePlay();
+    aheadLine.setLatLngs([]); doneLine.setLatLngs([]); toBest.setLatLngs([]); trail.setLatLngs([]).addTo(map);
+    $("etaNow").textContent = "–"; $("progBar").style.width = "0"; $("progText").textContent = "0.0 km driven"; $("roadNow").textContent = "live";
+    $("speedNow").textContent = "–"; S.carTo = null;
+    $("alert").className = "alert ok"; $("alert").textContent = "Press 📍 Start live tracking. Your browser will ask to share your location.";
+    $("best").innerHTML = '<p class="empty">Waiting for your location…</p>'; $("alts").innerHTML = '<p class="empty">–</p>';
+    if (useReal()) setStationSet(LIVE.real ? LIVE.real.stations : []);
+    liveDash();
+  } else {
+    stopLive(); trail.remove();
+    setStationSet(S.synthetic);
+    loadRoute().then(resetRide);
+  }
+  setApi(true);
+}
+$("modeSim").onclick = () => S.mode !== "sim" && setMode("sim");
+$("modeLive").onclick = () => S.mode !== "live" && setMode("live");
+$("liveSoc").addEventListener("input", () => { LIVE.soc = +$("liveSoc").value; $("liveSocVal").textContent = LIVE.soc + "%"; liveDash(); liveRecommend(true); });
+$("realStations").onchange = () => {
+  if (useReal()) { setStationSet(LIVE.real ? LIVE.real.stations : []); ensureReal(true); }
+  else setStationSet(S.synthetic);
+  setApi(true); liveRecommend(true);
+};
+$("liveBtn").onclick = () => (LIVE.watch == null ? startLive() : stopLive());
+
+function startLive() {
+  if (!("geolocation" in navigator)) { toast("This browser can't share location."); return; }
+  LIVE.soc = +$("liveSoc").value; LIVE.km = 0; LIVE.last = null; LIVE.lastSent = 0; trail.setLatLngs([]);
+  LIVE.watch = navigator.geolocation.watchPosition(onPos, onPosError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  $("liveBtn").textContent = "■ Stop live tracking";
+  setFollow(true);
+  $("alert").className = "alert ok"; $("alert").textContent = "Finding your location…";
+}
+function stopLive() {
+  if (LIVE.watch != null && "geolocation" in navigator) navigator.geolocation.clearWatch(LIVE.watch);
+  LIVE.watch = null;
+  $("liveBtn").textContent = "📍 Start live tracking";
+}
+function onPosError(err) {
+  stopLive();
+  $("alert").className = "alert stranded";
+  $("alert").textContent = err.code === 1
+    ? "Location permission was denied. Allow location for this site in your browser, or use Simulated ride."
+    : "Couldn't get your location (" + (err.message || "timeout") + "). Try again outdoors or use Simulated ride.";
+}
+function onPos(pos) {
+  const pt = [pos.coords.latitude, pos.coords.longitude];
+  if (LIVE.last) {
+    const d = hav(LIVE.last, pt);
+    if (d < 0.01) { if (Date.now() - LIVE.lastSent > 30000) liveRecommend(true); return; }   // GPS jitter
+    const v = vehicle();
+    LIVE.km += d;
+    LIVE.soc = Math.max(0, LIVE.soc - d * v.wh_per_km * 1.1 / 1000 / v.battery_kwh * 100);
+    $("liveSoc").value = Math.round(LIVE.soc); $("liveSocVal").textContent = Math.round(LIVE.soc) + "%";
+    trail.addLatLng(pt);
+  } else {
+    trail.setLatLngs([pt]);
+    map.setView(pt, 14);
+  }
+  LIVE.last = pt; LIVE.speed = pos.coords.speed;
+  S.carFrom = S.carTo = pt; S.carT0 = performance.now();
+  const svg = document.getElementById("carSvg");
+  if (svg && pos.coords.heading != null && !isNaN(pos.coords.heading)) svg.style.transform = `rotate(${pos.coords.heading}deg)`;
+  liveDash();
+  ensureReal();
+  if (Date.now() - LIVE.lastSent > 4000) liveRecommend();
+}
+
+// Real stations: fetched once per area in the background (OpenStreetMap is slow on a cold area), cached 24 h.
+function realKey(pt) { return `cw-real-${Math.round(pt[0] / 0.05)}-${Math.round(pt[1] / 0.05)}`; }
+async function ensureReal(force) {
+  if (!useReal() || !LIVE.last || LIVE.realLoading) return;
+  if (LIVE.real && hav(LIVE.real.center, LIVE.last) < REAL_REFETCH_KM && !force) return;
+  if (LIVE.real && force && hav(LIVE.real.center, LIVE.last) < REAL_REFETCH_KM) return;
+  const key = realKey(LIVE.last);
+  try {
+    const c = JSON.parse(localStorage.getItem(key) || "null");
+    if (c && Date.now() - c.t < 86400000) { applyReal(c.data, true); return; }
+  } catch (_) {}
+  LIVE.realLoading = true; LIVE.realError = null;
+  if (!LIVE.real) { $("alert").className = "alert plan"; $("alert").textContent = "Loading real charging stations near you from OpenStreetMap… (first time in an area can take 10–30 s)"; }
+  try {
+    const lat = LIVE.last[0].toFixed(4), lng = LIVE.last[1].toFixed(4);
+    let d;
+    try {
+      d = await api(`/api/stations/near?lat=${lat}&lng=${lng}`);
+    } catch (err) {
+      const fb = err.detail && err.detail.browser_fallback;
+      if (!fb) throw err;
+      d = await browserOverpass(fb, +lat, +lng);      // the server's IP was refused: ask OpenStreetMap from this device
+    }
+    try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), data: d })); } catch (_) {}
+    applyReal(d, false);
+  } catch (err) {
+    LIVE.realError = err.message;
+    if (!LIVE.real) {
+      toast("Couldn't load real stations: " + err.message);
+      $("alert").className = "alert stranded";
+      $("alert").textContent = "Real station data is unavailable right now. Untick \"Use real stations\" to use the synthetic network, or try again in a minute.";
+    }
+  } finally { LIVE.realLoading = false; }
+}
+async function browserOverpass(fb, lat, lng) {
+  const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const raw = await Promise.any(fb.urls.map((u) =>
+      fetch(u, { method: "POST", body: new URLSearchParams({ data: fb.query }), signal: ctrl.signal })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))));
+    ctrl.abort();
+    return await api("/api/stations/map", { elements: raw.elements || [], lat, lng });
+  } catch (e) {
+    throw new Error("OpenStreetMap is busy (" + (e.errors ? e.errors.map((x) => x.message).join(", ") : e.message) + ")");
+  } finally { clearTimeout(timer); }
+}
+function applyReal(d, cached) {
+  LIVE.real = { center: [d.lat, d.lng], stations: d.stations, label: d.sources.join(" + ") };
+  if (useReal()) setStationSet(d.stations);
+  $("realNote").textContent = `${d.count} real stations around you from ${d.sources.join(" + ")}${cached ? " (saved on this device)" : ""}. ${d.attribution}. Road distances: OSRM. Entries without plug details are marked "check first".`;
+  setApi(true);
+  liveRecommend(true);
+}
+function liveDash() {
+  const now = new Date(), soc = LIVE.soc;
+  $("socNow").textContent = soc.toFixed(1) + "%";
+  $("battBar").style.width = soc + "%";
+  $("battBar").style.background = soc <= +$("reserve").value + 8 ? "var(--bad)" : soc < 30 ? "var(--warn)" : "var(--accent)";
+  $("speedNow").textContent = LIVE.speed != null && !isNaN(LIVE.speed) ? Math.round(LIVE.speed * 3.6) : "–";
+  $("clockNow").textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  $("dayNow").textContent = DAYS[(now.getDay() + 6) % 7];
+  $("progText").textContent = `${LIVE.km.toFixed(1)} km driven`;
+}
+async function liveRecommend(force) {
+  if (S.mode !== "live" || !LIVE.last || (LIVE.inflight && !force)) return;
+  if (useReal() && !LIVE.real) return;                         // still loading real stations
+  LIVE.inflight = true; LIVE.lastSent = Date.now();
+  const now = new Date();
+  const tel = { lat: LIVE.last[0], lng: LIVE.last[1], soc: LIVE.soc, hour: now.getHours(), minute: now.getMinutes(),
+    day: (now.getDay() + 6) % 7, clock: `${pad(now.getHours())}:${pad(now.getMinutes())}` };
+  S.tel = tel;
+  try {
+    const rec = await api("/api/recommend", { ...baseParams(), lat: tel.lat, lng: tel.lng, soc: tel.soc, hour: tel.hour,
+      minute: tel.minute, day: tel.day, limit: 200, sticky_id: S.bestId, ...stationParams(LIVE.last) });
+    if (S.mode !== "live") return;
+    setApi(true);
+    $("rangeNow").textContent = Math.round(rec.range_km) + " km range (after reserve)";
+    renderRec(rec, null, tel);
+    if (rec.alert.level === "charge_now" && !S.warned && rec.best) {
+      S.warned = true;
+      toast(`Battery low: ${rec.best.name} is ${rec.best.road_km} km away. Tap 🧭 Navigate.`);
+    }
+  } catch (err) { setApi(false, err.message); }
+  finally { LIVE.inflight = false; }
+}
+
+// ── Onboarding: four "Continue" steps ───────────────────────────────────
+const OB = { step: 0, vehicle: "mg-zs-ev", soc: 35, mode: "live", route: "mysuru-highway" };
+function obStore(v) { try { if (v === undefined) return localStorage.getItem("cw-onboarded"); localStorage.setItem("cw-onboarded", v); } catch (_) { return null; } }
+function obOpen() { OB.step = 0; OB.vehicle = $("vehicle").value || OB.vehicle; $("ob").hidden = false; obRender(); $("obNext").focus(); }
+function obClose() { $("ob").hidden = true; obStore("1"); }
+function obRender() {
+  [...$("obDots").children].forEach((d, i) => d.classList.toggle("on", i <= OB.step));
+  $("obBack").style.visibility = OB.step ? "visible" : "hidden";
+  const b = $("obBody");
+  if (OB.step === 0) {
+    b.innerHTML = `<h2 id="obTitle">Never run out of charge mid-drive</h2>
+      <p>Chargewise watches your battery while you drive and keeps picking the best <b>and most reliable</b> charging stop from where you are right now, not from where you started.</p>
+      <p>It weighs distance, battery on arrival, live free plugs, predicted queue, charging speed, price, uptime and how far off your route it is, and tells you <b>why</b> it picked a station.</p>`;
+  } else if (OB.step === 1) {
+    b.innerHTML = `<h2 id="obTitle">Which car are you driving?</h2><p>Battery size and consumption decide how far you can go and how fast you charge.</p>
+      <div class="ob-grid">${S.vehicles.map((v) => `<button class="ob-opt${v.id === OB.vehicle ? " on" : ""}" data-v="${esc(v.id)}"><b>${esc(v.name)}</b>
+      <span>${v.battery_kwh} kWh · ~${Math.round(v.battery_kwh * 1000 / v.wh_per_km)} km full · DC ${v.max_dc_kw} kW</span></button>`).join("")}</div>`;
+    b.querySelectorAll("[data-v]").forEach((el) => (el.onclick = () => { OB.vehicle = el.dataset.v; obRender(); }));
+  } else if (OB.step === 2) {
+    const v = S.vehicles.find((x) => x.id === OB.vehicle) || vehicle();
+    b.innerHTML = `<h2 id="obTitle">How much battery do you have?</h2><p>Chargewise keeps a ${$("reserve").value}% reserve so you never arrive on empty.</p>
+      <div class="ob-big" id="obSocVal">${OB.soc}%</div><input type="range" id="obSoc" min="5" max="100" value="${OB.soc}" aria-label="Battery percent">
+      <p style="text-align:center;margin-top:8px" id="obRange"></p>`;
+    const upd = () => { OB.soc = +$("obSoc").value; $("obSocVal").textContent = OB.soc + "%";
+      $("obRange").textContent = `≈ ${Math.max(0, Math.round((OB.soc - +$("reserve").value) / 100 * v.battery_kwh * 1000 / v.wh_per_km / 1.1))} km before the reserve`; };
+    $("obSoc").oninput = upd; upd();
+  } else {
+    b.innerHTML = `<h2 id="obTitle">How do you want to try it?</h2>
+      <div class="ob-grid">
+        <button class="ob-opt${OB.mode === "live" ? " on" : ""}" data-m="live"><b>📍 Use my location <small style="color:var(--accent)">recommended</small></b><span>Your real position, real stations near you (OpenStreetMap) and real road distances. Works anywhere; best on your phone.</span></button>
+        <button class="ob-opt${OB.mode === "sim" ? " on" : ""}" data-m="sim"><b>🚗 Simulate a ride</b><span>A virtual car drives a Bengaluru route at up to 300× speed on synthetic data. Good for a demo.</span></button>
+      </div>
+      <div id="obRouteWrap" ${OB.mode === "sim" ? "" : "hidden"}><label for="obRoute">Route</label><select id="obRoute">${[...$("route").options].map((o) => `<option value="${esc(o.value)}"${o.value === OB.route ? " selected" : ""}>${esc(o.text)}</option>`).join("")}</select></div>`;
+    b.querySelectorAll("[data-m]").forEach((el) => (el.onclick = () => { OB.mode = el.dataset.m; obRender(); }));
+    const rs = $("obRoute"); if (rs) rs.onchange = () => (OB.route = rs.value);
+  }
+  $("obNext").textContent = OB.step < 3 ? "Continue →" : OB.mode === "sim" ? "▶ Start my ride" : "📍 Start live tracking";
+}
+$("obNext").onclick = async () => {
+  if (OB.step < 3) { OB.step++; obRender(); return; }
+  obClose();
+  $("vehicle").value = OB.vehicle;
+  if (OB.mode === "sim") {
+    $("soc").value = OB.soc; $("socVal").textContent = OB.soc + "%";
+    $("route").value = OB.route;
+    if (S.mode !== "sim") setMode("sim");
+    await loadRoute(); resetRide();
+    S.playing = true; S.lastFrame = performance.now(); setFollow(true); updatePlay();
+  } else {
+    $("liveSoc").value = OB.soc; $("liveSocVal").textContent = OB.soc + "%";
+    if (S.mode !== "live") setMode("live");
+    startLive();
+  }
+};
+$("obBack").onclick = () => { if (OB.step) { OB.step--; obRender(); } };
+$("obSkip").onclick = obClose;
+$("setupBtn").onclick = obOpen;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("ob").hidden) obClose(); });
+
+let toastTimer;
+function toast(msg) {
+  const el = $("toast"); el.textContent = msg; el.classList.add("on");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("on"), 3200);
+}
+function setApi(ok, msg) {
+  $("apiDot").className = "dot " + (ok ? "ok" : "bad");
+  $("apiText").textContent = !ok ? "API error: " + (msg || "offline")
+    : S.mode === "live" ? (useReal() ? (LIVE.real ? `Live GPS · ${LIVE.real.label}` : "Live GPS · loading real stations") : "Live GPS · synthetic stations") : "Simulated ride · synthetic data";
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────
+async function loadRoute() {
+  S.route = await api("/api/routes/" + encodeURIComponent($("route").value));
+  aheadLine.setLatLngs(S.route.path); doneLine.setLatLngs([]);
+  map.fitBounds(L.latLngBounds(S.route.path), { padding: [30, 30] });
+}
+(async function boot() {
+  try {
+    const [health, routes, vehicles, stations] = await Promise.all([api("/api/health"), api("/api/routes"), api("/api/vehicles"), api("/api/stations")]);
+    $("modelVer").textContent = health.model_version;
+    S.synthetic = stations.slice();
+    S.vehicles = vehicles; S.stations = stations;
+    for (const r of routes) $("route").add(new Option(`${r.name} · ${r.length_km} km`, r.id));
+    for (const v of vehicles) $("vehicle").add(new Option(`${v.name} · ${v.battery_kwh} kWh`, v.id, false, v.id === "mg-zs-ev"));
+    drawStations();
+    await loadRoute();
+    setApi(true);
+    resetRide();
+    requestAnimationFrame(frame);
+    if (!obStore()) obOpen();
+  } catch (err) {
+    setApi(false, err.message);
+    $("alert").className = "alert stranded";
+    $("alert").textContent = "Couldn't reach the Chargewise API: " + err.message;
+  }
+})();
+</script>
+</body>
+</html>

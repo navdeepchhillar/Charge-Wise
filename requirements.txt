@@ -1,0 +1,3 @@
+fastapi==0.115.0
+pydantic>=2.7,<3
+truststore>=0.9,<1      # use the OS certificate store for outbound HTTPS (works behind corporate proxies)
