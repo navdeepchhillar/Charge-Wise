@@ -2,7 +2,7 @@
 
 What is checked, how, and what is NOT claimed.
 
-## Automated (`pytest`, 82 tests)
+## Automated (`pytest`, 102 tests)
 
 | Area | What the tests prove |
 |---|---|
@@ -14,6 +14,7 @@ What is checked, how, and what is NOT claimed.
 | Live feed | Free plugs stay within 0..total, stable inside a 5-minute tick, change across ticks, are busier at rush hour; faults happen and exclude the station; `live=false` disables it. |
 | Real stations | OpenStreetMap tags map to the schema (sockets → CCS2/Type 2/CHAdeMO, power, capacity, opening hours); 2-wheeler and battery-swap stations are dropped; unlisted power is assumed and flagged; Open Charge Map merges in with a key (duplicates within 60 m dropped); one provider failing still gives real data; all failing falls back to synthetic with a warning; results and failures are cached per area; client-supplied stations are ranked. Network mocked. |
 | Road routing | OSRM distances/times replace estimates (with rush-hour slowdown), confirmed stations are routed first, one call per position (cached), failure falls back to estimates with a warning. |
+| Gap filling | Known networks get likely CCS2 + Type 2 and a typical power (name or operator field); tagged data is kept and stays confirmed; only missing fields are filled; EESL/BESCOM stay unknown with a Bharat DC-001 note; missing prices are estimated by charger type and labelled; published prices kept; likely stations are usable but lose to an equally placed confirmed one; enrichment is idempotent. |
 | Unconfirmed best | With no confirmed station nearby the best unconfirmed one is shown and flagged; a confirmed one always wins. |
 | API | Every endpoint, 404/422 validation, page served, `/api/ride/state` under 150 ms. |
 

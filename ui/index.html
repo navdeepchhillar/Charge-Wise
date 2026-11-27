@@ -110,6 +110,10 @@ label.check{display:flex;gap:6px;align-items:center;margin-top:10px;color:var(--
 .livechip{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--accent-soft);color:#09603f}
 .livechip.busy{background:var(--warn-soft);color:#8a5200}
 .livechip.fault{background:var(--bad-soft);color:#9c241b}
+.q{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;margin-right:4px}
+.q.confirmed{background:var(--accent-soft);color:#09603f}
+.q.likely{background:var(--info-soft);color:#1d4ab8}
+.q.unknown{background:var(--warn-soft);color:#8a5200}
 .note{font-size:12px;background:var(--warn-soft);color:#8a5200;border-radius:10px;padding:8px 10px}
 .ob{position:fixed;inset:0;z-index:2000;background:rgba(10,20,15,.45);display:grid;place-items:center;padding:16px}
 .ob[hidden]{display:none}
@@ -204,7 +208,7 @@ select{max-width:100%;text-overflow:ellipsis}
       </div>
       <div id="liveControls" hidden>
         <div class="controls"><button class="btn primary" id="liveBtn">📍 Start live tracking</button></div>
-        <p class="muted small">Your location stays in this browser and is only sent to this app's API to rank stations. Battery drops as you drive (estimated from distance); move the slider to correct it.</p>
+        <p class="muted small">No GPS? Tap the map to set where you are. Your location stays in this browser and is only sent to this app's API to rank stations. Battery drops as you drive (estimated from distance); move the slider to correct it.</p>
       </div>
     </section>
 
@@ -325,6 +329,7 @@ let probe = null;
 map.on("dragstart", () => setFollow(false));
 map.on("click", async (e) => {
   if (S.playing || LIVE.watch != null) return;
+  if (S.mode === "live") { setManualPosition([e.latlng.lat, e.latlng.lng]); return; }
   try {
     if (useReal() && !LIVE.real) { toast("Real stations are still loading…"); return; }
     const rec = await api("/api/recommend", { ...baseParams(), lat: e.latlng.lat, lng: e.latlng.lng, ...stationParams([e.latlng.lat, e.latlng.lng]),
@@ -382,6 +387,10 @@ function liveChip(s) {
   if (s.live.fault) return `<span class="livechip fault">fault · ${esc(s.live.updated)}</span>`;
   return `<span class="livechip${s.live.free ? "" : " busy"}">${s.live.free}/${s.live.total} free · live ${esc(s.live.updated)}</span>`;
 }
+const Q_LABEL = { confirmed: "✓ confirmed", likely: "≈ likely", unknown: "? unknown plug" };
+function qChip(s) { return s && s.data_quality && s.source !== "synthetic" && s.source !== "original fixture"
+  ? `<span class="q ${s.data_quality}" title="${s.data_quality === "likely" ? "Inferred: " + esc((s.inferred || []).join(", ")) : ""}">${Q_LABEL[s.data_quality]}</span>` : ""; }
+function priceTxt(s) { return s.price_per_kwh != null ? `₹${s.price_per_kwh}/kWh${s.price_estimated ? " est." : ""}` : "price unknown"; }
 function stIcon(color, best, dc) {
   const size = best ? 22 : dc ? 15 : 12;
   return L.divIcon({ className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
@@ -393,7 +402,7 @@ function stationPopup(id) {
   let h = `<b>${esc(base.name)}</b><br><span class="muted">${esc(base.operator)} · ${base.power_kw ?? "?"} kW · ${esc((base.connectors || []).join(", ") || "connector unknown")} · ${base.count ?? "?"} plug${base.count === 1 ? "" : "s"}</span>`;
   if (r) {
     h += `<br>${liveChip(r)} ${r.road_km} km · ${Math.round(r.drive_min)} min drive · arrive ${Math.round(r.arrival_pct)}%`;
-    h += `<br>Wait ~${Math.round(r.wait_min)} min · charge ${r.charge_min != null ? Math.round(r.charge_min) + " min" : "?"} · ${r.cost_inr != null ? "₹" + r.cost_inr : "price ?"}`;
+    h += `<br>${qChip(r)}Wait ~${Math.round(r.wait_min)} min · charge ${r.charge_min != null ? Math.round(r.charge_min) + " min" : "?"} · ${r.cost_inr != null ? "₹" + r.cost_inr + (r.price_estimated ? " est." : "") : "price ?"}`;
     if (r.cons.length) h += `<br><span style="color:#8a5200">${r.cons.map(esc).join("<br>")}</span>`;
   } else h += `<br><span class="muted">Outside the search radius</span>`;
   return h;
@@ -574,18 +583,19 @@ function renderRec(rec, probePoint, t) {
   } else {
     const fmt = (x, d = 0) => (x == null ? "?" : Number(x).toFixed(d));
     $("best").innerHTML = `
-      <div class="score" style="${rec.best_confirmed === false ? "background:#e0a100" : ""}">${Math.round(best.score)}<small>SCORE</small></div>
+      <div class="score" style="${best.data_quality === "unknown" ? "background:#e0a100" : best.data_quality === "likely" ? "background:#2563eb" : ""}">${Math.round(best.score)}<small>SCORE</small></div>
       <p class="name">${esc(best.name)}</p>
-      <p class="sub">${liveChip(best)} ${esc(best.operator)} · ${best.power_kw ?? "?"} kW · ${esc(best.connectors.join(", "))} · ${best.count ?? "?"} plug${best.count === 1 ? "" : "s"} · ${esc(best.hours === "24x7" ? "open 24×7" : "open " + best.hours)}</p>
+      <p class="sub">${qChip(best)}${liveChip(best)} ${esc(best.network || best.operator)} · ${best.power_kw ?? "?"} kW · ${esc(best.connectors.join(", "))} · ${best.count == null ? "plug count unknown" : best.count + " plug" + (best.count === 1 ? "" : "s")} · ${esc(best.hours === "24x7" ? "open 24×7" : "open " + best.hours)}</p>
       <div class="facts">
         <div><b>${best.distance_source === "road" ? "" : "≈ "}${fmt(best.road_km, 1)} km</b><span>${fmt(best.drive_min)} min ${best.distance_source === "road" ? "by road" : "drive (est.)"}</span></div>
         <div><b>${fmt(best.arrival_pct)}%</b><span>battery on arrival</span></div>
         <div><b>~${fmt(best.wait_min)} min</b><span>${best.live ? "queue (ML + live)" : "queue (ML estimate)"}</span></div>
         <div><b>${best.charge_min == null ? "?" : fmt(best.charge_min)} min</b><span>${best.charge_kw ? `to ${$("target").value}% at ${fmt(best.charge_kw)} kW` : "power not listed"}</span></div>
-        <div><b>${best.cost_inr != null ? "₹" + best.cost_inr : "?"}</b><span>${best.price_per_kwh != null ? "₹" + best.price_per_kwh + "/kWh" : "price unknown"}</span></div>
+        <div><b>${best.cost_inr != null ? (best.price_estimated ? "~₹" : "₹") + best.cost_inr : "?"}</b><span>${priceTxt(best)}</span></div>
         <div><b>${fmt(best.uptime * 100)}%</b><span>uptime</span></div>
       </div>
-      ${rec.best_confirmed === false ? `<p class="note">Details unconfirmed: plug type or power isn't listed for any station near you. This is the best guess; check before going.</p>` : ""}
+      ${best.data_quality === "unknown" ? `<p class="note">Details unconfirmed: no station near you lists its plug type. This is the best guess; check before going.</p>`
+        : best.data_quality === "likely" ? `<p class="note" style="background:var(--info-soft);color:#1d4ab8">${esc(((best.inferred || []).join(" and ")).replace(/^./, (c) => c.toUpperCase()))} inferred from the operator${best.network ? " (" + esc(best.network) + ")" : ""}. Confirm in the operator's app before you go.</p>` : ""}
       <ul class="why">${best.reasons.map((r) => `<li class="pro">${esc(r)}</li>`).join("")}${best.cons.map((r) => `<li class="con">${esc(r)}</li>`).join("")}</ul>
       <div class="controls" style="margin-top:10px">
         ${S.mode === "sim" ? `<button class="btn primary" id="chargeBtn" ${probePoint ? "disabled title='Only from the car&#39;s position'" : ""}>⚡ Charge here</button>` : ""}
@@ -601,7 +611,7 @@ function renderRec(rec, probePoint, t) {
   const alts = rec.stations.filter((s) => s.eligibility !== "excluded" && (!best || s.id !== best.id)).slice(0, 5);
   $("alts").innerHTML = alts.length ? alts.map((s) => `
     <div class="alt" data-id="${esc(s.id)}" tabindex="0">
-      <div class="n"><b>${esc(s.name)}</b><span>${liveChip(s)} ${s.road_km} km · arrive ${Math.round(s.arrival_pct)}% · wait ~${Math.round(s.wait_min)} min${s.eligibility === "verify" ? " · check first" : ""}</span></div>
+      <div class="n"><b>${esc(s.name)}</b><span>${qChip(s)}${liveChip(s)} ${s.road_km} km · arrive ${Math.round(s.arrival_pct)}% · wait ~${Math.round(s.wait_min)} min${s.eligibility === "verify" ? " · check first" : ""}</span></div>
       <div class="bar"><i style="width:${s.score}%;background:${s.eligibility === "verify" ? "#e0a100" : "var(--accent)"}"></i></div>
       <div class="s">${Math.round(s.score)}</div>
     </div>`).join("") : '<p class="empty">No other usable stations nearby.</p>';
@@ -703,12 +713,26 @@ function stopLive() {
   LIVE.watch = null;
   $("liveBtn").textContent = "📍 Start live tracking";
 }
+// No GPS (denied, desktop, indoors): a tap on the map sets the position and runs the same real-data flow.
+function setManualPosition(pt) {
+  if (probe) { probe.remove(); probe = null; }
+  LIVE.last = pt; LIVE.speed = null; LIVE.soc = +$("liveSoc").value;
+  S.carFrom = S.carTo = pt; S.carT0 = performance.now();
+  trail.setLatLngs([pt]);
+  if (map.getZoom() < 12) map.setView(pt, 13);
+  liveDash();
+  $("progText").textContent = "position set on the map";
+  toast("Position set. Finding the best stop from here…");
+  S.bestId = null;
+  ensureReal();
+  liveRecommend(true);
+}
 function onPosError(err) {
   stopLive();
   $("alert").className = "alert stranded";
   $("alert").textContent = err.code === 1
-    ? "Location permission was denied. Allow location for this site in your browser, or use Simulated ride."
-    : "Couldn't get your location (" + (err.message || "timeout") + "). Try again outdoors or use Simulated ride.";
+    ? "Location permission was denied. Allow location for this site in your browser, or tap the map to set where you are."
+    : "Couldn't get your location (" + (err.message || "timeout") + "). Try again outdoors, or tap the map to set where you are.";
 }
 function onPos(pos) {
   const pt = [pos.coords.latitude, pos.coords.longitude];

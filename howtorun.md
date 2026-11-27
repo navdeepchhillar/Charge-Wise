@@ -68,13 +68,16 @@ Optional environment variables (Vercel → Settings → Environment Variables �
 | `OVERPASS_URLS` | 3 public mirrors | comma-separated Overpass endpoints (raced in parallel) |
 | `OVERPASS_TIMEOUT_S` / `OSRM_TIMEOUT_S` | 25 / 4 | how long to wait before falling back |
 
-Real-data limits: OpenStreetMap entries in India often miss plug type and power ("check first"); prices and
-live occupancy are not published openly. 2-wheeler and battery-swap stations are filtered out.
+Real-data gaps and how the app fills them: plug type and power are inferred from the operator for the
+main car networks (shown as "≈ likely"); missing prices are estimated from typical tariffs (shown as
+"est."); stations with no plug information stay "? unknown / check first". Live occupancy is not published
+openly, so the queue is the ML estimate. 2-wheeler and battery-swap stations are filtered out. Adding an
+`OCM_API_KEY` merges Open Charge Map, which often has more plug details.
 
 ## 7. Tests
 
 ```bash
-pytest -q          # 82 tests, ~10 s, no network (external services are mocked)
+pytest -q          # 102 tests, ~5 s, no network (external services are mocked)
 ```
 
 ## 8. Branches and deploying (Git → Vercel)
@@ -107,7 +110,7 @@ python ml/train.py        # rewrites data/model.json and data/metrics.json (seed
 | `ModuleNotFoundError: fastapi` | Activate the venv (`source .venv/bin/activate`) and reinstall. |
 | Port already in use | `uvicorn app:app --port 8001` |
 | Map is grey | The map tiles come from openstreetmap.org: check your internet connection. The API still works. |
-| "Location permission was denied" | Allow location for the site in browser settings; on phones use the HTTPS (Vercel) URL. |
+| "Location permission was denied" | Allow location for the site in browser settings (on phones use the HTTPS Vercel URL), or just **tap the map** to set where you are: the same real-data flow runs from that spot. |
 | "API error" pill in the header | The server isn't running or crashed: check the terminal running uvicorn. |
 | "Real station data is unavailable" | Public OpenStreetMap servers are busy: wait a minute, or untick "Use real stations" to use the synthetic network. |
 | `CERTIFICATE_VERIFY_FAILED` locally | Behind a corporate proxy: `pip install -r requirements.txt` (includes `truststore`, which uses your OS certificates). |
